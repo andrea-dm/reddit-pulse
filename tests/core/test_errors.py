@@ -85,9 +85,11 @@ class TestErrorsModule:
                 assert raised.__cause__ is cause
 
         def test_a_bare_reddit_error_does_not_swallow_unrelated_exceptions(self) -> None:
+            unrelated = ValueError("unrelated")
+
             with pytest.raises(ValueError):
                 try:
-                    raise ValueError("unrelated")
+                    raise unrelated
                 except RedditError:  # pragma: no cover - must not match
                     pytest.fail("ValueError must not be caught as a RedditError")
 

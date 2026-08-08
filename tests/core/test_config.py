@@ -100,8 +100,10 @@ class TestConfigModule:
         def test_no_subsection_can_be_mutated(
             self, project_config: Config, section: str, field: str, value: object
         ) -> None:
+            target = getattr(project_config, section)
+
             with pytest.raises(ValidationError):
-                setattr(getattr(project_config, section), field, value)
+                setattr(target, field, value)
 
         def test_shipped_config_declares_every_documented_family(self, project_config: Config) -> None:
             for name in ["bert", "gemma", "gemma_27", "llama", "qwen", "test"]:
@@ -154,8 +156,10 @@ class TestConfigModule:
             ],
         )
         def test_non_contiguous_label_ids_are_rejected(self, ids: dict[str, int]) -> None:
+            encodings = dict.fromkeys(ids, 0)
+
             with pytest.raises(ValidationError, match="contiguous"):
-                LabelsConfig(labels=ids, encodings=dict.fromkeys(ids, 0))
+                LabelsConfig(labels=ids, encodings=encodings)
 
         def test_encodings_must_declare_exactly_the_same_names(self, label_ids: dict[str, int]) -> None:
             with pytest.raises(ValidationError, match="exactly the same names"):
@@ -254,7 +258,10 @@ class TestConfigModule:
         def test_loading_the_same_file_twice_yields_equal_configurations(
             self, config_factory: Callable[..., Config]
         ) -> None:
-            assert config_factory() == config_factory()
+            first = config_factory()
+            second = config_factory()
+
+            assert first == second
 
         # ──────────────────────────────────────────────── family resolution ──
 
@@ -493,9 +500,10 @@ class TestConfigModule:
         )
         def test_shifting_every_id_breaks_contiguity(self, names: list[str], shift: int) -> None:
             mapping = {name: i + shift for i, name in enumerate(names)}
+            encodings = dict.fromkeys(names, 0)
 
             with pytest.raises(ValidationError, match="contiguous"):
-                LabelsConfig(labels=mapping, encodings=dict.fromkeys(names, 0))
+                LabelsConfig(labels=mapping, encodings=encodings)
 
         @given(
             names=st.lists(LABEL_NAMES, min_size=2, max_size=5, unique=True),

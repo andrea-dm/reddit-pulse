@@ -72,14 +72,18 @@ class TestCliModule:
     @pytest.mark.unit
     class TestUnits:
         def test_a_subcommand_is_required(self) -> None:
+            parser = cli.build_parser()
+
             with pytest.raises(SystemExit) as excinfo:
-                cli.build_parser().parse_args([])
+                parser.parse_args([])
 
             assert excinfo.value.code == 2
 
         def test_an_unknown_subcommand_is_rejected(self) -> None:
+            parser = cli.build_parser()
+
             with pytest.raises(SystemExit):
-                cli.build_parser().parse_args(["evaluate"])
+                parser.parse_args(["evaluate"])
 
         @pytest.mark.parametrize("command", ["run", "train", "predict"])
         def test_every_documented_subcommand_exists(self, command: str) -> None:
@@ -126,14 +130,19 @@ class TestCliModule:
             assert args.gpu is None
 
         def test_the_version_is_reported_and_exits_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
+            parser = cli.build_parser()
+
             with pytest.raises(SystemExit) as excinfo:
-                cli.build_parser().parse_args(["--version"])
+                parser.parse_args(["--version"])
 
             assert excinfo.value.code == 0
             assert "reddit" in capsys.readouterr().out
 
         def test_the_parser_is_rebuilt_on_every_call(self) -> None:
-            assert cli.build_parser() is not cli.build_parser()
+            first = cli.build_parser()
+            second = cli.build_parser()
+
+            assert first is not second
 
     @pytest.mark.integration
     class TestIntegration:
@@ -190,8 +199,10 @@ class TestCliModule:
         def test_a_missing_config_file_becomes_a_usage_message(
             self, tmp_path: Path, capsys: pytest.CaptureFixture[str], patched_commands: dict[str, FuncRecorder]
         ) -> None:
+            argv = ["run", "-f", "gemma", "--config", str(tmp_path / "absent.yml")]
+
             with pytest.raises(SystemExit) as excinfo:
-                cli.main(["run", "-f", "gemma", "--config", str(tmp_path / "absent.yml")])
+                cli.main(argv)
 
             assert excinfo.value.code == 2
             assert "Config file not found" in capsys.readouterr().err
@@ -311,10 +322,10 @@ class TestCliModule:
             capsys: pytest.CaptureFixture[str],
         ) -> None:
             raw_config["labels"]["labels"] = {"down": 1, "neutral": 2, "up": 3}
-            config_path = write_config(raw_config, name="broken.yml")
+            argv = ["run", "-f", "llm_family", "--config", str(write_config(raw_config, name="broken.yml"))]
 
             with pytest.raises(SystemExit) as excinfo:
-                cli.main(["run", "-f", "llm_family", "--config", str(config_path)])
+                cli.main(argv)
 
             assert excinfo.value.code == 2
             assert "contiguous" in capsys.readouterr().err
@@ -326,10 +337,10 @@ class TestCliModule:
             tmp_path: Path,
         ) -> None:
             raw_config["dataset"]["path"] = str(tmp_path / "never_created.xlsx")
-            config_path = write_config(raw_config, name="no_dataset.yml")
+            argv = ["run", "-f", "llm_family", "--config", str(write_config(raw_config, name="no_dataset.yml"))]
 
             with pytest.raises(SystemExit) as excinfo:
-                cli.main(["run", "-f", "llm_family", "--config", str(config_path)])
+                cli.main(argv)
 
             assert excinfo.value.code == 2
 

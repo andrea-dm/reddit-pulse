@@ -153,8 +153,10 @@ class TestRunTaskModule:
         def test_an_unknown_family_is_reported_before_any_import(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
+            args = Namespace(family="nope", limit=0, no_inference=False)
+
             with pytest.raises(UnknownFamilyError):
-                execute_run(Namespace(family="nope", limit=0, no_inference=False), bootstrapped_config)
+                execute_run(args, bootstrapped_config)
 
             assert patched_pipelines["llm"].calls == []
             assert patched_pipelines["bert"].calls == []

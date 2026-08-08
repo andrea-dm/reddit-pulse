@@ -168,8 +168,10 @@ class TestLlmsTrainingModule:
                 families={"exotic": {"finetuning_methods": ["adalora"], "models": [{"name": "m", "id": "a/m"}]}}
             )
 
+            models = config.family("exotic")
+
             with pytest.raises(UnsupportedMethodError, match="adalora"):
-                run_family(config, config.family("exotic"))
+                run_family(config, models)
 
         def test_the_rejection_is_a_user_fixable_configuration_error(
             self, config_factory: Callable[..., Config]
@@ -178,16 +180,20 @@ class TestLlmsTrainingModule:
                 families={"exotic": {"finetuning_methods": ["adalora"], "models": [{"name": "m", "id": "a/m"}]}}
             )
 
+            models = config.family("exotic")
+
             with pytest.raises(ConfigError):
-                run_family(config, config.family("exotic"))
+                run_family(config, models)
 
         def test_the_rejection_message_lists_the_available_methods(self, config_factory: Callable[..., Config]) -> None:
             config = config_factory(
                 families={"exotic": {"finetuning_methods": ["adalora"], "models": [{"name": "m", "id": "a/m"}]}}
             )
 
+            models = config.family("exotic")
+
             with pytest.raises(UnsupportedMethodError) as excinfo:
-                run_family(config, config.family("exotic"))
+                run_family(config, models)
 
             assert "qdora, xqdora" in str(excinfo.value)
 
@@ -196,9 +202,10 @@ class TestLlmsTrainingModule:
                 families={"exotic": {"finetuning_methods": ["adalora"], "models": [{"name": "m", "id": "a/m"}]}}
             )
             config.paths.cache_dir.mkdir(parents=True)
+            models = config.family("exotic")
 
             with pytest.raises(UnsupportedMethodError):
-                run_family(config, config.family("exotic"))
+                run_family(config, models)
 
             assert list(config.paths.cache_dir.iterdir()) == []
 

@@ -109,8 +109,10 @@ class TestPredictTaskModule:
         def test_an_unknown_family_is_reported_before_any_import(
             self, bootstrapped_config: Config, patched_discovery: dict[str, Recorder]
         ) -> None:
+            args = Namespace(family="nope", directory="models")
+
             with pytest.raises(UnknownFamilyError):
-                execute_predict(Namespace(family="nope", directory="models"), bootstrapped_config)
+                execute_predict(args, bootstrapped_config)
 
             assert patched_discovery["archives"].calls == []
             assert patched_discovery["directories"].calls == []

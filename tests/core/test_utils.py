@@ -103,8 +103,10 @@ class TestUtilsModule:
             assert dump_object({}) == b"{}\n"
 
         def test_dump_object_rejects_unserializable_values_with_a_type_error(self) -> None:
+            unserializable = {"bad": object()}
+
             with pytest.raises(TypeError, match="Failed to encode to JSON"):
-                dump_object({"bad": object()})
+                dump_object(unserializable)
 
         def test_dump_object_error_keeps_the_original_cause(self) -> None:
             with pytest.raises(TypeError) as excinfo:

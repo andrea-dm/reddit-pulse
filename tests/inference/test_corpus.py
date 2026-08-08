@@ -243,9 +243,10 @@ class TestCorpusModule:
             self, bootstrapped_config: Config, submissions_job: CorpusJob
         ) -> None:
             absent = bootstrapped_config.paths.results_dir / "all_final_jae.csv"
+            frame = labelled_frame()
 
             with pytest.raises(CorpusUnavailableError, match="does not exist"):
-                update_answers(absent, labelled_frame(), submissions_job)
+                update_answers(absent, frame, submissions_job)
 
         def test_a_family_suffix_writes_to_a_per_family_copy(
             self, write_answers: Callable[..., Path], submissions_job: CorpusJob
@@ -290,9 +291,10 @@ class TestCorpusModule:
         ) -> None:
             absent = bootstrapped_config.paths.results_dir / "all_final_jae.csv"
             job = dataclasses.replace(submissions_job, family_suffix="gemma")
+            frame = labelled_frame()
 
             with pytest.raises(CorpusUnavailableError):
-                update_answers(absent, labelled_frame(), job)
+                update_answers(absent, frame, job)
 
         # ─────────────────────────────────────────────── predict_corpus ──
 
