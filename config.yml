@@ -1,0 +1,156 @@
+# Unified project configuration.
+#
+# Replaces the old config.yaml + one-yaml-per-family layout
+# (config_bert.yaml, config_gemma.yaml, config_gemma_27.yaml, config_llama.yaml,
+#  config_qwen.yaml, config_small_part1/2.yaml, config_medium_part1/2.yaml,
+#  config_tests.yaml — now archived under legacy/configs/).
+#
+# Relative paths are resolved against the directory containing this file, so
+# the project works identically from /home/azureuser/cloudfiles/... and
+# /mnt/batch/.../code/Users/... (both mount the same share).
+
+system:
+  sleep_time: 0  # seconds to wait before starting
+
+# Env vars the launch_*.sh scripts used to export; applied by `reddit <cmd>`
+# before torch is imported. CUDA_VISIBLE_DEVICES comes from the --gpu flag.
+environment:
+  hf_home: /home/azureuser/cloudfiles/code/Users/andrea.del_monaco/.hf_cache
+  dotenv: /home/azureuser/cloudfiles/code/Users/andrea.del_monaco/.env
+  pytorch_alloc_conf: "expandable_segments:True"
+
+dataset:
+  path: data/labelled.xlsx
+  text_column: title
+  label_column: Label
+  test_size: 0.10
+  validation_size: 0.19
+
+paths:
+  reddit_dir: data
+  cache_dir: cache
+  dumps_dir: dumps
+  output_dir: outputs
+  results_dir: results
+  models_dir: models
+  labels_dir: labelled
+  logs_dir: logs
+
+labels:
+  labels:
+    down: 0
+    neutral: 1
+    up: 2
+  encodings:
+    down: -1
+    neutral: 0
+    up: 1
+
+training:
+  # Default PEFT methods for LLM families that do not declare their own.
+  finetuning_methods: [qdora, xqdora]
+  # LLM hyperparameters. The BERT pipeline reads `training.bert` below.
+  learning_rate: 1.0e-4
+  num_train_epochs: 40
+  gradient_accumulation_steps: 8
+  early_stopping_patience: 5
+  # Full fine-tuning hyperparameters for `kind: bert` families. These were
+  # hardcoded in training/bert.py; the values are unchanged.
+  bert:
+    learning_rate: 5.0e-5
+    num_train_epochs: 15
+  # Splatted verbatim into `transformers.TrainingArguments`; every key must be
+  # a valid constructor parameter for the installed transformers version.
+  arguments:
+    save_total_limit: 2
+    save_on_each_node: false
+    report_to: null
+    push_to_hub: false
+    disable_tqdm: true
+    # --- Performance ---
+    bf16: false
+    fp16: true            # mixed precision for faster training
+    per_device_train_batch_size: 64
+    per_device_eval_batch_size: 64
+    weight_decay: 0.01
+    dataloader_num_workers: 4
+    dataloader_pin_memory: true
+    # --- Strategy ---
+    eval_strategy: epoch
+    save_strategy: epoch
+    load_best_model_at_end: true
+    metric_for_best_model: f1_weighted
+    greater_is_better: true
+  seeds:
+    - 107935903
+    - 228277762
+    - 239080115
+    - 477284336
+    - 709964709
+    - 1245093080
+    # - 1329496050
+    - 1361883482
+    - 1389303030
+    - 2078237541
+    # - 2565555162
+    - 2786505123
+    # - 2923862602
+    - 2928142788
+    - 3144693271
+    - 3154447144
+    # - 3266123502
+    - 4054871397
+    # - 4203596092
+    - 4280088979
+
+inference:
+  batch_size: 64
+  submissions: true
+  comments: true
+
+# Model families, selected at the CLI with --family. The *_part1/_part2
+# families exist to split work across two GPUs (run one per GPU with --gpu).
+families:
+  bert:
+    kind: bert
+    models:
+      - {name: bert_base, id: google-bert/bert-base-uncased}
+      - {name: inflabert, id: MAPAi/InflaBERT}
+      - {name: finbert, id: ProsusAI/finbert}
+  gemma:
+    models:
+      - {name: gemma2_9b, id: google/gemma-2-9b}
+      - {name: gemma2_2b, id: google/gemma-2-2b}
+  gemma_27:
+    models:
+      - {name: gemma2_27b, id: google/gemma-2-27b}
+  llama:
+    models:
+      # - {name: llama3.1_8b, id: meta-llama/Llama-3.1-8B}
+      # - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
+      - {name: llama3.2_3b, id: meta-llama/Llama-3.2-3B}
+  qwen:
+    models:
+      - {name: qwen2.5_7b, id: Qwen/Qwen2.5-7B}
+      - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
+      - {name: qwen2.5_1.5b, id: Qwen/Qwen2.5-1.5B}
+  small_part1:
+    models:
+      - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
+      - {name: gemma2_2b, id: google/gemma-2-2b}
+  small_part2:
+    models:
+      - {name: qwen2.5_1.5b, id: Qwen/Qwen2.5-1.5B}
+      - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
+  medium_part1:
+    models:
+      - {name: llama3.1_8b, id: meta-llama/Llama-3.1-8B}
+      - {name: qwen2.5_7b, id: Qwen/Qwen2.5-7B}
+  medium_part2:
+    finetuning_methods: [xqdora]
+    models:
+      # - {name: llama3.2_3b, id: meta-llama/Llama-3.2-3B}
+      - {name: gemma2_9b, id: google/gemma-2-9b}
+  test:
+    models:
+      - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}

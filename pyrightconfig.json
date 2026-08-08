@@ -1,0 +1,47 @@
+{
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "venvPath": "/home/azureuser/tools/uv/envs",
+  "venv": "reddit",
+  "useLibraryCodeForTypes": true,
+  "stubPath": "stubs",
+  "reportMissingModuleSource": "none",
+  "include": [
+    "src",
+    "tests"
+  ],
+  "exclude": [
+    "**/.*",
+    "**/node_modules",
+    "**/__pycache__",
+    "cache",
+    "data",
+    "dumps",
+    "labelled",
+    "legacy",
+    "logs",
+    "models",
+    "notebooks",
+    "outputs",
+    "results"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "extraPaths": [
+        "./src",
+        "."
+      ],
+      "reportUnknownMemberType": false,
+      "reportPrivateUsage": false,
+      "reportUnknownLambdaType": false
+    },
+    {
+      "root": ".",
+      "extraPaths": [
+        "./src"
+      ]
+    }
+  ]
+}

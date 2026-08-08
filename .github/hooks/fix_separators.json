@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "windows": "D:\\CustomTools\\uv\\envs\\reddit\\Scripts\\python.exe .\\.github\\scripts\\fix-separators-hook.py",
+        "timeout": 10
+      }
+    ]
+  }
+}

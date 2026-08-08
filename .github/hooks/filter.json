@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "windows": "D:\\CustomTools\\uv\\envs\\reddit\\Scripts\\python.exe .\\.github\\scripts\\block-excluded-paths.py",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

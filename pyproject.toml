@@ -1,0 +1,89 @@
+[project]
+name = "reddit"
+version = "1.0.0"
+description = "Reddit sentiment labelling: PEFT fine-tuning of LLM/BERT classifiers and full-corpus inference over r/economy, r/Economics and r/wallstreetbets."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate",
+    "bitsandbytes",
+    "datasets",
+    "huggingface-hub",
+    "numpy>=2,<3",
+    "openpyxl", # pandas engine for the labelled.xlsx gold dataset
+    "orjson",
+    "pandas<3",
+    "peft",
+    "pydantic>=2",
+    "python-dotenv",
+    "pyyaml",
+    "scikit-learn",
+    "torch",
+    "tqdm",
+    "transformers",
+]
+
+[project.optional-dependencies]
+# flash-attn needs a CUDA toolchain at build time; install explicitly on GPU boxes:
+#   uv pip install flash-attn --no-build-isolation
+flash = ["flash-attn"]
+
+[project.scripts]
+reddit = "reddit.cli:main"
+
+[dependency-groups]
+dev = ["pytest", "hypothesis", "ruff", "pyright"]
+# CI groups (see .github/workflows/dependency-architecture-checks.yml):
+# `test` carries just enough to import reddit.core and run the config tests
+# without the heavy ML stack.
+lint = ["ruff", "pyright"]
+test = ["pytest", "hypothesis", "pydantic>=2", "python-dotenv", "pyyaml", "pandas<3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ═══════════════════════════════════════════════════════════ LINTING & FORMATTING ═══ #
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+include = ["src/**/*.py", "tests/**/*.py"]
+extend-exclude = ["data", "legacy", "notebooks", "outputs", "results"]
+
+[tool.ruff.lint]
+extend-select = [
+    "A", # flake8-builtins
+    "B", # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "I", # flake8-import-order
+    "PIE", # flake8-pie
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "E", # pycodestyle
+    "F", # pyflakes
+    "RUF", # ruff-specific rules
+]
+
+ignore = [
+    "EXE002", # files on the AML CIFS mount are always mode 777; no shebang intended
+    "LOG015", # root-logger calls are the project's established logging style
+    "DTZ005", # naive local datetimes are intentional (run names, Rome-time stamps)
+    "DTZ006",
+    "BLE001", # blanket except keeps multi-day multi-seed runs alive on any failure
+    "G201", # .error(exc_info=True) pairs with a separate user-facing print_log line
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]
+
+# ═══════════════════════════════════════════════════════════════════════ TESTING ═══ #
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "unit: isolated public-API behaviour; no real I/O beyond tmp_path, no heavy model work",
+    "integration: exercises real boundaries (filesystem, CSV/Excel, zip archives, logging handlers)",
+    "contracts: property-based, metamorphic and invariant checks (Hypothesis)",
+]

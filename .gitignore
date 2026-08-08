@@ -1,0 +1,39 @@
+# Archived pre-refactor scripts, flat src modules and yaml configs
+legacy/
+
+# Git
+.github/skills/
+.github/agents/
+.github/copilot-instructions.md
+.claude/git
+
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.coverage*
+
+# Azure ML editor artefacts
+*.amltmp
+.ipynb_aml_checkpoints/
+.vscode/
+.amlignore
+
+# Run artefacts and large data
+cache/
+dumps/
+logs/
+models/
+outputs/
+results/
+labelled/
+data/
+notebooks/
+
+# Miscellaneous
+*.code-workspace
