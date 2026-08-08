@@ -98,7 +98,10 @@ def update_answers(output_file: Path, df_labelled: DataFrame, job: CorpusJob) ->
     df_new = df_labelled.drop(columns=[job.text_col], errors="ignore")
 
     join_cols = list(job.cols)
-    merged = df_answers.merge(df_new, on=join_cols, how="left")
+    # `many_to_one`: duplicate join keys in the freshly labelled frame would
+    # silently multiply answers rows on every merge; failing loudly here is
+    # caught by the caller, which has already persisted the labelled CSV.
+    merged = df_answers.merge(df_new, on=join_cols, how="left", validate="many_to_one")
 
     # Write through a sibling temp file and rename: the BERT path rewrites the
     # answers file in place, so a crash mid-write would destroy the accumulated
