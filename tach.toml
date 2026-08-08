@@ -1,0 +1,89 @@
+# =============================================================================
+# Tach — module / package boundaries
+# -----------------------------------------------------------------------------
+# Layering (top → bottom). Higher layers may import lower; lower MUST NOT
+# import higher. `core` is the foundation and is allowed no internal deps.
+#
+#   __main__
+#    └─ cli
+#        └─ tasks          (composition root: the ONLY place training and
+#            ├─ training    inference may be combined)
+#            │   ├─ data
+#            │   └─ modeling
+#            └─ inference
+#                └─ modeling
+#
+#   data, modeling, inference, training all sit on `core`.
+#   `training` must never import `inference` (and vice versa): their only
+#   meeting point is `tasks`, which keeps the training stack importable
+#   without the corpus-labelling machinery and vice versa.
+#
+# Run:  uv run tach check
+# =============================================================================
+
+source_roots = ["src"]
+exclude = [
+    "tests",
+    "legacy",
+    "notebooks",
+    "**/__pycache__",
+]
+
+# ---------------------------------------------------------------------------
+# Module declarations (one per top-level subpackage of `reddit`).
+# `depends_on` lists the ONLY internal modules each may import from.
+# ---------------------------------------------------------------------------
+
+[[modules]]
+path = "reddit.__main__"
+depends_on = [
+    "reddit.cli",
+]
+
+[[modules]]
+path = "reddit.cli"
+depends_on = [
+    "reddit.core",
+    "reddit.tasks",
+]
+
+# The composition root: the only module allowed to see both pipelines.
+[[modules]]
+path = "reddit.tasks"
+depends_on = [
+    "reddit.core",
+    "reddit.training",
+    "reddit.inference",
+]
+
+[[modules]]
+path = "reddit.training"
+depends_on = [
+    "reddit.core",
+    "reddit.data",
+    "reddit.modeling",
+]
+
+[[modules]]
+path = "reddit.inference"
+depends_on = [
+    "reddit.core",
+    "reddit.modeling",
+]
+
+[[modules]]
+path = "reddit.data"
+depends_on = [
+    "reddit.core",
+]
+
+[[modules]]
+path = "reddit.modeling"
+depends_on = [
+    "reddit.core",
+]
+
+# `core` is the foundation: no internal dependencies allowed.
+[[modules]]
+path = "reddit.core"
+depends_on = []

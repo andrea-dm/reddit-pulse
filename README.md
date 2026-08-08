@@ -40,6 +40,8 @@ Quality gates (also run in CI — see `.github/workflows/`):
 ```bash
 ruff check src/ tests/
 pyright              # strict; config + venv pinned in pyrightconfig.json
+tach check           # module boundaries (layering declared in tach.toml)
+deptry src           # dependency hygiene (config in pyproject.toml)
 pytest tests/ -q
 ```
 

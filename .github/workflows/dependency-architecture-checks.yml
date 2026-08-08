@@ -35,6 +35,54 @@ jobs:
       - name: Run ruff
         run: uv run --no-sync ruff check src/ tests/
 
+  tach:
+    name: tach
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install lint dependencies
+        run: uv sync --only-group lint --no-install-project --default-index https://pypi.org/simple
+
+      - name: Check module boundaries
+        run: uv run --no-sync tach check
+
+  deptry:
+    name: deptry
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install lint dependencies
+        run: uv sync --only-group lint --no-install-project --default-index https://pypi.org/simple
+
+      - name: Check dependency hygiene
+        run: uv run --no-sync deptry src
+
   pyright:
     name: pyright
     runs-on: ubuntu-latest

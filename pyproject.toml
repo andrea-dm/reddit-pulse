@@ -32,11 +32,11 @@ flash = ["flash-attn"]
 reddit = "reddit.cli:main"
 
 [dependency-groups]
-dev = ["pytest", "hypothesis", "ruff", "pyright"]
+dev = ["pytest", "hypothesis", "ruff", "pyright", "tach", "deptry"]
 # CI groups (see .github/workflows/dependency-architecture-checks.yml):
-# `test` carries just enough to import reddit.core and run the config tests
-# without the heavy ML stack.
-lint = ["ruff", "pyright"]
+# `lint` runs ruff/pyright/tach/deptry; `test` is installed alongside the full
+# project so every sub-suite (including the torch-dependent ones) is collected.
+lint = ["ruff", "pyright", "tach", "deptry"]
 test = ["pytest", "hypothesis", "pydantic>=2", "python-dotenv", "pyyaml", "pandas<3"]
 
 [build-system]
@@ -76,6 +76,30 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004"]
+
+# ══════════════════════════════════════════════════ DEPENDENCIES & ARCHITECTURE ═══ #
+# Module boundaries live in tach.toml (`uv run tach check`).
+
+[tool.deptry]
+known_first_party = ["reddit"]
+
+# Modules whose import names differ from the distribution name on PyPI.
+[tool.deptry.package_module_name_map]
+python-dotenv = "dotenv"
+pyyaml = "yaml"
+scikit-learn = "sklearn"
+flash-attn = "flash_attn"
+
+[tool.deptry.per_rule_ignores]
+# Declared-but-never-imported: all are loaded dynamically at runtime, so
+# deptry's static scan cannot see them.
+DEP002 = [
+    "accelerate", # `device_map="auto"` dispatch inside transformers
+    "bitsandbytes", # 4-bit backend selected by BitsAndBytesConfig
+    "huggingface-hub", # hub downloads + HF_TOKEN consumption via transformers
+    "openpyxl", # pandas engine for read_excel(labelled.xlsx)
+    "flash-attn", # `attn_implementation="flash_attention_2"` (optional extra)
+]
 
 # ═══════════════════════════════════════════════════════════════════════ TESTING ═══ #
 
