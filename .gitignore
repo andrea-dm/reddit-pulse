@@ -5,7 +5,7 @@ legacy/
 .github/skills/
 .github/agents/
 .github/copilot-instructions.md
-.claude/git
+.claude/
 
 
 # Python
