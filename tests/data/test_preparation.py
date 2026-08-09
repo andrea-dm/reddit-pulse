@@ -232,9 +232,11 @@ class TestPreparationModule:
             assert sorted(p.name for p in tmp_path.iterdir()) == before
 
         def test_the_shipped_gold_dataset_prepares_cleanly(
-            self, project_config: Config
+            self, project_config: Config, shipped_dataset_path: Path
         ) -> None:
             """The real ``data/labelled.xlsx`` must satisfy the declared label set."""
+            if not shipped_dataset_path.exists():
+                pytest.skip(f"shipped gold dataset `{shipped_dataset_path}` is not present in this environment")
             bundle = load_and_prepare_data(
                 data_file_path=project_config.dataset.path,
                 text_column=project_config.dataset.text_column,

@@ -126,10 +126,42 @@ def project_config_raw(_project_config_baseline: dict[str, Any]) -> dict[str, An
     return deepcopy(_project_config_baseline)
 
 
+@pytest.fixture(scope="session")
+def shipped_dataset_path(project_config_path: Path, _project_config_baseline: dict[str, Any]) -> Path:
+    """Absolute path of the real gold dataset ``config.yml`` points ``dataset.path`` at.
+
+    Deliberately gitignored (``/data/`` — proprietary, too large for git), so
+    absent from a bare CI checkout. Tests that need the file's actual rows
+    (not just its existence) skip via this fixture; see ``project_config``.
+    """
+    raw = os.path.expandvars(os.path.expanduser(str(_project_config_baseline["dataset"]["path"])))
+    resolved = Path(raw)
+    return resolved if resolved.is_absolute() else project_config_path.parent / resolved
+
+
 @pytest.fixture
-def project_config(project_config_path: Path) -> Config:
-    """The shipped configuration, loaded. Loading is a pure read (no side effects)."""
-    return load_config(project_config_path)
+def project_config(
+    project_config_path: Path,
+    shipped_dataset_path: Path,
+    _project_config_baseline: dict[str, Any],
+    write_config: Callable[..., Path],
+    tmp_path: Path,
+) -> Config:
+    """The shipped configuration, loaded. Loading is a pure read (no side effects).
+
+    When the real gold dataset isn't present in this environment, validate a
+    copy with an empty placeholder dataset instead: every consumer here except
+    the one integration test that reads the file's actual rows only needs the
+    config to *parse*, not the real data to exist (see ``shipped_dataset_path``).
+    """
+    if shipped_dataset_path.exists():
+        return load_config(project_config_path)
+
+    placeholder = tmp_path / "placeholder-gold.xlsx"
+    placeholder.touch()
+    raw = deepcopy(_project_config_baseline)
+    raw["dataset"]["path"] = str(placeholder)
+    return load_config(write_config(raw, directory=tmp_path / "shipped-copy"))
 
 
 # ─────────────────────────────────────────────── self-contained tmp_path config ───
