@@ -77,7 +77,7 @@ class Models(BaseModel):
 
 
 class EnvironmentConfig(BaseModel):
-    """Process-environment knobs previously exported by the ``launch_*.sh`` scripts."""
+    """Process-environment knobs previously exported by shell scripts before each run."""
 
     model_config = _FROZEN
 

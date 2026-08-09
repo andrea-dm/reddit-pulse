@@ -1,8 +1,4 @@
-"""Multi-seed QDoRA/xQDoRA fine-tuning of LLM classifiers.
-
-Replaces ``legacy/scripts/run_llms_serial.py`` (full pipeline) and
-``legacy/scripts/train_llms.py`` (no labeller injected).
-"""
+"""Multi-seed QDoRA/xQDoRA fine-tuning of LLM classifiers."""
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
 # file, and public signatures type them as explicit `Any` boundaries.

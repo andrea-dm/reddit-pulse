@@ -1,8 +1,4 @@
-"""Corpus labelling with fine-tuned LLM classifiers (4-bit, flash-attention).
-
-Replaces ``legacy/scripts/predict_llms.py`` and the inference half of
-``legacy/scripts/run_llms_serial.py``.
-"""
+"""Corpus labelling with fine-tuned LLM classifiers (4-bit, flash-attention)."""
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
 # file, and public signatures type them as explicit `Any` boundaries.
@@ -73,9 +69,8 @@ def build_jobs(config: Config, family: str, model_name: str, finetuning_method: 
                 label_col=label_col,
                 trend_col=trend_col,
                 text_col="body_com",
-                # Legacy provenance: `predict_llms.py` joined comments on these
-                # three keys. The BERT pipeline uses a four-key set; the
-                # divergence is deliberate and preserved.
+                # Comments join on these three keys. The BERT pipeline uses a
+                # four-key set; the divergence is deliberate and preserved.
                 cols=("created_utc_com", "id_sub", "id_com"),
                 batch_size=config.inference.batch_size,
                 max_length=LLM_MAX_LENGTH,

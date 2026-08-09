@@ -1,8 +1,4 @@
-"""Corpus labelling with fully fine-tuned BERT-family classifiers.
-
-Replaces ``legacy/scripts/predict_bert.py`` and the inference half of
-``legacy/scripts/run_bert_serial.py``.
-"""
+"""Corpus labelling with fully fine-tuned BERT-family classifiers."""
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
 # file, and public signatures type them as explicit `Any` boundaries.
@@ -56,9 +52,8 @@ def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
                 batch_size=config.inference.batch_size,
                 max_length=BERT_MAX_LENGTH,
                 half=True,
-                # Legacy provenance: `predict_bert.py` kept the text column in
-                # the labelled CSV. It is still dropped before the answers
-                # merge — see `update_answers`.
+                # The text column is kept in the labelled CSV, but dropped
+                # before the answers merge — see `update_answers`.
                 keep_text=True,
             )
         )
@@ -74,9 +69,8 @@ def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
                 label_col=label_col,
                 trend_col=trend_col,
                 text_col="body_com",
-                # Legacy provenance: `predict_bert.py` joined comments on these
-                # four keys, one more than the LLM pipeline. The divergence is
-                # deliberate and preserved.
+                # Comments join on these four keys, one more than the LLM
+                # pipeline. The divergence is deliberate and preserved.
                 cols=("created_utc_sub", "created_utc_com", "id_sub", "id_com"),
                 batch_size=config.inference.batch_size,
                 max_length=BERT_MAX_LENGTH,

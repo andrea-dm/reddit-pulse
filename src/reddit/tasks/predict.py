@@ -1,9 +1,4 @@
-"""CLI task: inference-only labelling from saved checkpoints.
-
-``reddit predict --family gemma_27 --directory models`` replaces
-``legacy/scripts/launch_predict_llms.sh``; ``reddit predict --family bert
---directory models`` replaces ``legacy/scripts/launch_predict_bert.sh``.
-"""
+"""CLI task: inference-only labelling from saved checkpoints."""
 
 from __future__ import annotations
 

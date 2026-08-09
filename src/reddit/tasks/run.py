@@ -1,8 +1,7 @@
 """CLI task: the full pipeline (train -> select median seed -> label corpus).
 
-``reddit run --family gemma`` replaces ``legacy/scripts/launch_gemma.sh`` etc.;
 ``reddit train --family gemma`` is the same pipeline without the corpus
-labelling stage (the old ``train_llms.py``).
+labelling stage.
 
 This module is the composition root for training: it is the only place that
 knows about both the training pipelines and the inference labeller, which is

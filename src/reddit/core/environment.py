@@ -1,9 +1,8 @@
 """Process-environment bootstrap.
 
-Replaces the boilerplate every ``legacy/scripts/launch_*.sh`` used to export
-(``CUDA_VISIBLE_DEVICES``, ``HF_HOME``, ``PYTORCH_CUDA_ALLOC_CONF``) plus the
-dotenv + Hugging Face Hub login each script performed.  Must run BEFORE torch
-initializes CUDA, i.e. before the pipeline modules are imported.
+Exports ``CUDA_VISIBLE_DEVICES``, ``HF_HOME``, and ``PYTORCH_CUDA_ALLOC_CONF``,
+and performs the dotenv + Hugging Face Hub login each run needs. Must run
+BEFORE torch initializes CUDA, i.e. before the pipeline modules are imported.
 
 Also the home of :func:`bootstrap_directories`, so that loading a
 configuration stays free of filesystem side effects.

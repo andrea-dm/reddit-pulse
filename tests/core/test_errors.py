@@ -1,8 +1,8 @@
 """Contract tests for the :mod:`reddit.core.errors` exception hierarchy.
 
 The hierarchy is a public contract: the CLI catches ``ConfigError`` to emit a
-``parser.error`` message and ``RedditError`` to exit with status 1, and legacy
-call sites still catch ``KeyError`` for an unknown family.
+``parser.error`` message and ``RedditError`` to exit with status 1, and
+existing call sites still catch ``KeyError`` for an unknown family.
 """
 
 from __future__ import annotations

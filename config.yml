@@ -1,10 +1,5 @@
 # Unified project configuration.
 #
-# Replaces the old config.yaml + one-yaml-per-family layout
-# (config_bert.yaml, config_gemma.yaml, config_gemma_27.yaml, config_llama.yaml,
-#  config_qwen.yaml, config_small_part1/2.yaml, config_medium_part1/2.yaml,
-#  config_tests.yaml — now archived under legacy/configs/).
-#
 # Relative paths are resolved against the directory containing this file, so
 # the project works identically from /home/azureuser/cloudfiles/... and
 # /mnt/batch/.../code/Users/... (both mount the same share).
@@ -12,8 +7,8 @@
 system:
   sleep_time: 0  # seconds to wait before starting
 
-# Env vars the launch_*.sh scripts used to export; applied by `reddit <cmd>`
-# before torch is imported. CUDA_VISIBLE_DEVICES comes from the --gpu flag.
+# Env vars applied by `reddit <cmd>` before torch is imported.
+# CUDA_VISIBLE_DEVICES comes from the --gpu flag.
 environment:
   hf_home: /home/azureuser/cloudfiles/code/Users/andrea.del_monaco/.hf_cache
   dotenv: /home/azureuser/cloudfiles/code/Users/andrea.del_monaco/.env

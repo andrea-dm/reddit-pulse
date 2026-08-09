@@ -1,7 +1,4 @@
-"""Multi-seed full fine-tuning of BERT-family classifiers (no PEFT).
-
-Replaces ``legacy/scripts/run_bert_serial.py``.
-"""
+"""Multi-seed full fine-tuning of BERT-family classifiers (no PEFT)."""
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
 # file, and public signatures type them as explicit `Any` boundaries.
