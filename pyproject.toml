@@ -1,8 +1,10 @@
 [project]
 name = "reddit"
 version = "1.0.0"
-description = "Reddit sentiment labelling: PEFT fine-tuning of LLM/BERT classifiers and full-corpus inference over r/economy, r/Economics and r/wallstreetbets."
+description = "Reddit inflation-direction labelling: PEFT fine-tuning of LLM/BERT directional (UP/DOWN/NEUTRAL) classifiers and full-corpus inference over r/economy, r/Economics and r/wallstreetbets."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
 requires-python = ">=3.12"
 dependencies = [
     "accelerate",
