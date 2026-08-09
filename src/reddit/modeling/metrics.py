@@ -39,11 +39,22 @@ def compute_metrics(eval_pred: Any) -> dict[str, float]:
         # a class may be absent from this evaluation batch
         auc = float("nan")
 
+    # ``zero_division`` has no annotation in sklearn's own signature — only the
+    # default value "warn" — so pyright infers `str` from that default and rejects
+    # a numeric override. sklearn's docs and runtime validation
+    # (``_check_zero_division``) explicitly accept 0, 1 or ``np.nan`` too; typing
+    # this as ``Any`` documents that gap in one place instead of four.
+    # ``0`` means "score an undefined metric (e.g. a class with no predicted or
+    # true samples) as 0" rather than emitting an ``UndefinedMetricWarning``.
+    zero_division: Any = 0
+
     return {
         "accuracy": float(accuracy_score(labels, preds)),
-        "f1_weighted": float(f1_score(y_true=labels, y_pred=preds, average="weighted", zero_division=0)),
-        "f1_macro": float(f1_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
-        "recall_macro": float(recall_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
-        "precision_macro": float(precision_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
+        "f1_weighted": float(f1_score(y_true=labels, y_pred=preds, average="weighted", zero_division=zero_division)),
+        "f1_macro": float(f1_score(y_true=labels, y_pred=preds, average="macro", zero_division=zero_division)),
+        "recall_macro": float(recall_score(y_true=labels, y_pred=preds, average="macro", zero_division=zero_division)),
+        "precision_macro": float(
+            precision_score(y_true=labels, y_pred=preds, average="macro", zero_division=zero_division)
+        ),
         "roc_auc": auc,
     }
