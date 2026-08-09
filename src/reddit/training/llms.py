@@ -1,4 +1,9 @@
-"""Multi-seed QDoRA/xQDoRA fine-tuning of LLM classifiers."""
+"""Multi-seed QDoRA+/xQDoRA+ fine-tuning of decoder LLM (SLM) classifiers.
+
+See Also:
+    `Advanced — Operations: Workflows <advanced/operations/workflows.md#training-llms>`_:
+        End-to-end walkthrough of :func:`run_family` and :func:`run_model`.
+"""
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
 # file, and public signatures type them as explicit `Any` boundaries.
@@ -44,9 +49,46 @@ from reddit.training.selection import select_median
 
 
 class LlmSeedStrategy:
-    """PEFT (QDoRA/xQDoRA) fine-tuning of a quantized decoder LLM classifier."""
+    """PEFT (QDoRA+/xQDoRA+) fine-tuning of a quantized decoder LLM classifier.
+
+    Implements :class:`reddit.training.loop.SeedStrategy` for the
+    small-decoder-LLM (SLM) families declared in ``config.yml`` (Gemma-2,
+    Llama-3, Qwen2.5). Each method contributes one piece of the paper's PEFT
+    recipe: :meth:`build_model` attaches the QDoRA+/xQDoRA+ adapters from
+    :data:`reddit.modeling.peft.peft_config` to a 4-bit-quantized base model,
+    and :meth:`optimizers` applies the complementary LoRA+ asymmetric
+    learning-rate schedule.
+
+    Notes:
+        This class fine-tunes the small decoder classifiers only. The
+        unfine-tuned LLaMA-70B zero-shot baseline discussed in the paper is
+        not part of this pipeline.
+
+    See Also:
+        :class:`reddit.training.bert.BertSeedStrategy`: The sibling strategy
+            for full fine-tuning of BERT-family encoders (no PEFT).
+    """
 
     def build_model(self, ctx: SeedContext, bundle: DataBundle) -> tuple[Any, Any]:
+        """Load the base model in 4-bit and attach the configured PEFT adapters.
+
+        Args:
+            ctx: Run-scoped context; ``ctx.finetuning_method`` selects the
+                entry in :data:`reddit.modeling.peft.peft_config`
+                (``"qdora"`` or ``"xqdora"``).
+            bundle: Prepared gold dataset (only its label mapping is used
+                here, to size the classification head).
+
+        Returns:
+            A 2-tuple of:
+
+            - the PEFT-wrapped, 4-bit-quantized model, ready for training;
+            - the underlying ``AutoConfig`` used to build it.
+
+        Notes:
+            Downloads/reads the base checkpoint from the Hugging Face Hub
+            cache (``ctx.hf_cache``) — network/disk I/O on cache miss.
+        """
         model_conf = AutoConfig.from_pretrained(
             ctx.model.id,
             num_labels=bundle.num_labels,
@@ -66,12 +108,33 @@ class LlmSeedStrategy:
         return model, model_conf
 
     def parameter_counts(self, model: Any) -> tuple[int | None, int | None]:
+        """Return ``(trainable, total)`` parameter counts from the PEFT wrapper.
+
+        Args:
+            model: A :class:`peft.PeftModel` as returned by :meth:`build_model`.
+
+        Returns:
+            A 2-tuple of:
+
+            - ``trainable``: adapter parameter count, or ``None`` on failure.
+            - ``total``: frozen-base-plus-adapters count, or ``None`` on failure.
+        """
         try:
             return model.get_nb_trainable_parameters()
         except Exception:
             return None, None
 
     def tokenize(self, ctx: SeedContext, bundle: DataBundle) -> Any:
+        """Tokenize every split of the gold dataset and set the torch format.
+
+        Args:
+            ctx: Run-scoped context supplying the tokenizer.
+            bundle: Prepared gold dataset with a ``"text"`` column.
+
+        Returns:
+            The tokenized ``DatasetDict``, with the raw ``"text"`` column
+            dropped and tensors returned in torch format.
+        """
         tokenizer = ctx.tokenizer
 
         def tokenize_batch(examples):
@@ -83,9 +146,32 @@ class LlmSeedStrategy:
         return tokenized
 
     def data_collator(self, ctx: SeedContext) -> Any:
+        """Return a dynamic-padding collator aligned to 8-token multiples.
+
+        Args:
+            ctx: Run-scoped context supplying the tokenizer.
+
+        Returns:
+            A ``transformers.DataCollatorWithPadding`` instance.
+        """
         return DataCollatorWithPadding(tokenizer=ctx.tokenizer, pad_to_multiple_of=8, return_tensors="pt")
 
     def training_arguments(self, ctx: SeedContext) -> TrainingArguments:
+        """Build the ``TrainingArguments`` for one LLM fine-tuning run.
+
+        Args:
+            ctx: Run-scoped context (run name, cache directory, config).
+
+        Returns:
+            A populated ``transformers.TrainingArguments``, combining the
+            LLM-specific learning rate/epoch/accumulation settings from
+            ``config.training`` with the pass-through fields in
+            ``config.training.arguments``.
+
+        Notes:
+            Uses a cosine learning-rate schedule and gradient checkpointing
+            (reentrant) to fit the quantized model's memory budget.
+        """
         training = ctx.config.training
         return TrainingArguments(
             run_name=ctx.run_name,
@@ -100,6 +186,29 @@ class LlmSeedStrategy:
         )
 
     def optimizers(self, ctx: SeedContext, model: Any) -> tuple[Any, Any]:
+        """Build the LoRA+ optimizer that completes the QDoRA+/xQDoRA+ recipe.
+
+        Constructs an ``AdamW`` optimizer with decoupled weight decay under
+        the LoRA+ asymmetric learning-rate scheme: the low-rank adapter's
+        ``B`` matrix is trained at ``loraplus_lr_ratio`` times the base
+        learning rate applied to ``A`` (:math:`\\eta_B = 5 \\cdot \\eta_A`),
+        which the LoRA+ paper shows more effectively balances the two
+        matrices' contributions during PEFT fine-tuning.
+
+        Args:
+            ctx: Run-scoped context supplying the base learning rate.
+            model: The PEFT-wrapped model returned by :meth:`build_model`.
+
+        Returns:
+            A 2-tuple of ``(optimizer, scheduler)``; the scheduler is
+            ``None`` because ``lr_scheduler_type`` in
+            :meth:`training_arguments` is set on ``TrainingArguments``
+            instead.
+
+        See Also:
+            :data:`reddit.modeling.peft.peft_config`: The DoRA/quantization
+                half of the QDoRA+/xQDoRA+ recipe this optimizer completes.
+        """
         return (
             create_loraplus_optimizer(
                 model=model,

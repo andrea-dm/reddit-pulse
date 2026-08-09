@@ -1,10 +1,14 @@
-"""Command-line entry point for the Reddit sentiment-labelling pipeline.
+"""Command-line entry point for the Reddit inflation-direction labelling pipeline.
 
 Wires the pipeline subcommands under a single ``main()`` dispatcher.  Adding
 a new pipeline requires only:
 
 1. Implementing a ``setup_<name>`` / ``execute_<name>`` pair in a task module.
 2. Registering a new subparser block here.
+
+See Also:
+    `Advanced — Operations: Workflows <advanced/operations/workflows.md>`_:
+        Full call-chain walkthrough of every subcommand below.
 
 Examples:
     Typical invocations from the project root::
@@ -37,6 +41,7 @@ DEFAULT_CONFIG = "config.yml"
 
 
 def _add_common_arguments(parser: ArgumentParser) -> None:
+    """Register the ``-c/--config`` and ``-g/--gpu`` flags shared by every subcommand."""
     parser.add_argument(
         "-c",
         "--config",
@@ -54,6 +59,7 @@ def _add_common_arguments(parser: ArgumentParser) -> None:
 
 
 def _resolve_config_path(args: Namespace) -> Path:
+    """Resolve the config path: ``--config``, else ``./config.yml``, else the repo-root default."""
     if args.config:
         return Path(args.config)
     candidate = Path.cwd() / DEFAULT_CONFIG

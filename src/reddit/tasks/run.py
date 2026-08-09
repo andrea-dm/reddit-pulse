@@ -16,7 +16,12 @@ from reddit.core.config import Config
 
 
 def setup_run(parser: ArgumentParser) -> None:
-    """Register run/train-specific CLI arguments on the provided subparser."""
+    """Register run/train-specific CLI arguments on the provided subparser.
+
+    Args:
+        parser: The ``run``/``train`` subparser to add ``-f/--family``,
+            ``-l/--limit`` and ``--no-inference`` to (mutated in-place).
+    """
     parser.add_argument(
         "-f",
         "--family",
@@ -41,6 +46,10 @@ def setup_run(parser: ArgumentParser) -> None:
 
 def execute_run(args: Namespace, config: Config) -> int:
     """Run the training pipeline for the selected family.
+
+    Args:
+        args: Parsed CLI namespace (``family``, ``limit``, ``no_inference``).
+        config: Project configuration.
 
     Returns:
         The number of runs that produced a selected checkpoint.

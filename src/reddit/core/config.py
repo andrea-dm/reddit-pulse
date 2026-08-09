@@ -26,6 +26,11 @@ from yaml import YAMLError, safe_load
 
 from reddit.core.errors import ConfigError, UnknownFamilyError
 
+# Rationale: "adalora" is a declared-but-unimplemented option — selecting it
+# raises `UnsupportedMethodError` (see `reddit.training.llms.run_family`),
+# since `reddit.modeling.peft.peft_config` only registers the paper's two
+# recipes, "qdora" (QDoRA+) and "xqdora" (xQDoRA+). "-" marks full BERT
+# fine-tuning, which uses no PEFT method at all.
 type FineTuningMethod = Literal["qdora", "xqdora", "adalora", "-"]
 type PerformanceMetric = Literal["f1_weighted", "f1", "accuracy", "recall", "precision"]
 type ModelKind = Literal["llm", "bert"]
@@ -77,7 +82,13 @@ class Models(BaseModel):
 
 
 class EnvironmentConfig(BaseModel):
-    """Process-environment knobs previously exported by shell scripts before each run."""
+    """Process-environment knobs previously exported by shell scripts before each run.
+
+    Attributes:
+        hf_home: Hugging Face cache root; expanded (``~``/env vars) if set.
+        dotenv: Path to a ``.env`` file to load (for hub tokens etc.).
+        pytorch_alloc_conf: Value exported as ``PYTORCH_CUDA_ALLOC_CONF``.
+    """
 
     model_config = _FROZEN
 
@@ -92,6 +103,15 @@ class EnvironmentConfig(BaseModel):
 
 
 class SystemConfig(BaseModel):
+    """Run-identity and startup knobs.
+
+    Attributes:
+        date: Run-date stamp (``%Y%m%d``) embedded in log/metrics filenames;
+            defaults to today.
+        sleep_time: Seconds :func:`reddit.cli.main` sleeps before dispatching
+            the subcommand (``0`` disables the sleep).
+    """
+
     model_config = _FROZEN
 
     date: str = Field(default_factory=lambda: datetime.now().strftime("%Y%m%d"))
@@ -99,6 +119,16 @@ class SystemConfig(BaseModel):
 
 
 class DatasetConfig(BaseModel):
+    """The hand-labelled gold dataset consumed by :func:`reddit.data.preparation.load_and_prepare_data`.
+
+    Attributes:
+        path: Path to the gold Excel file; validated to exist at load time.
+        text_column: Column holding the submission text.
+        label_column: Column holding the directional label.
+        test_size: Fraction of the data held out for testing.
+        validation_size: Fraction of the data held out for validation.
+    """
+
     model_config = _FROZEN
 
     path: Path
@@ -124,6 +154,16 @@ class LabelsConfig(BaseModel):
     Training ids and inference decoding both read from here; deriving the
     mapping from the gold file made them two independent sources of truth that
     agreed only because alphabetical order happened to match.
+
+    Attributes:
+        labels: Label name to classification-head id (``config.yml`` declares
+            ``{down: 0, neutral: 1, up: 2}``) — a three-way directional
+            inflation-expectation label, not a generic sentiment score.
+        encodings: Label name to signed trend encoding (``config.yml``
+            declares ``{down: -1, neutral: 0, up: 1}``), attached to each
+            classified row as ``CorpusJob.trend_col`` by
+            :mod:`reddit.inference.corpus`.
+
     """
 
     model_config = _FROZEN
@@ -191,7 +231,14 @@ class PathsConfig(BaseModel):
 
 
 class InferenceConfig(BaseModel):
-    """Corpus-labelling knobs."""
+    """Corpus-labelling knobs.
+
+    Attributes:
+        batch_size: Rows tokenized/classified per forward pass in
+            :func:`reddit.inference.corpus.predict_corpus`.
+        submissions: Label the per-subreddit submission CSVs.
+        comments: Label the per-subreddit comment CSVs.
+    """
 
     model_config = _FROZEN
 
@@ -217,7 +264,7 @@ class ArgumentsConfig(BaseModel):
     report_to: str | None = None
     push_to_hub: bool = False
     disable_tqdm: bool = True
-    # --- Performance ---
+    # --- Performance --------------------------------------------------
     bf16: bool = False
     fp16: bool = True
     per_device_train_batch_size: int = 64
@@ -225,7 +272,7 @@ class ArgumentsConfig(BaseModel):
     weight_decay: float = 0.01
     dataloader_num_workers: int = 4
     dataloader_pin_memory: bool = True
-    # --- Strategy ---
+    # --- Strategy -----------------------------------------------------
     eval_strategy: Literal["epoch", "step"] = "epoch"
     save_strategy: Literal["epoch", "step"] = "epoch"
     load_best_model_at_end: bool = True
@@ -248,6 +295,26 @@ class BertTrainingConfig(BaseModel):
 
 
 class TrainingConfig(BaseModel):
+    """Multi-seed fine-tuning hyperparameters, shared plus per-kind overrides.
+
+    Attributes:
+        early_stopping_patience: Epochs without eval-metric improvement
+            before :class:`transformers.EarlyStoppingCallback` stops a seed.
+        arguments: Pass-through ``transformers.TrainingArguments`` fields.
+        seeds: Random seeds fine-tuned over per (model, method); see
+            :func:`reddit.training.loop.run_seeds`.
+        finetuning_methods: Default PEFT methods (QDoRA+/xQDoRA+) for LLM
+            families that do not declare their own under ``families:``.
+        learning_rate: Base learning rate for decoder-LLM (PEFT) training —
+            the LoRA+ ``A``-matrix rate that
+            :meth:`reddit.training.llms.LlmSeedStrategy.optimizers` scales
+            by ``loraplus_lr_ratio`` for the ``B`` matrix.
+        num_train_epochs: Epoch budget for decoder-LLM training.
+        gradient_accumulation_steps: Micro-batches accumulated per optimizer
+            step for decoder-LLM training.
+        bert: Full-fine-tuning hyperparameters for ``kind: bert`` families.
+    """
+
     model_config = _FROZEN
 
     early_stopping_patience: int = 5
@@ -262,6 +329,13 @@ class TrainingConfig(BaseModel):
 
 
 class Config(BaseModel):
+    """The unified, frozen project configuration loaded from ``config.yml``.
+
+    Composes every typed section (dataset, paths, labels, training,
+    inference, environment, families) into one immutable object passed down
+    to every pipeline; see :func:`load_config`.
+    """
+
     model_config = _FROZEN
 
     system: SystemConfig = Field(default_factory=SystemConfig)

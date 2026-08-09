@@ -25,6 +25,13 @@ def bootstrap_directories(config: Config) -> None:
     Previously done inside a pydantic field validator, which made merely
     loading a config create directories as a side effect.  Callers that only
     want to inspect a configuration no longer pay for that.
+
+    Args:
+        config: Project configuration; every field of ``config.paths`` is
+            created (``mkdir(parents=True, exist_ok=True)``).
+
+    Notes:
+        Creates directories on disk (I/O).
     """
     for name in PathsConfig.model_fields:
         directory: Path = getattr(config.paths, name)
@@ -38,6 +45,12 @@ def prepare_environment(config: Config, gpu: str | None = None) -> None:
         config: Project configuration (``environment`` section).
         gpu: Value for ``CUDA_VISIBLE_DEVICES`` (e.g. ``"0"`` or ``"0,1"``);
             ``None`` leaves the current setting untouched.
+
+    Notes:
+        Mutates ``os.environ`` (``CUDA_VISIBLE_DEVICES``,
+        ``PYTORCH_CUDA_ALLOC_CONF``, ``HF_HOME``, ``HF_TOKEN`` — global
+        process state) and, when ``environment.dotenv`` exists, loads it
+        (I/O). Logs a warning if no Hugging Face token is found.
     """
     if gpu is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu

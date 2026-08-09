@@ -1,4 +1,9 @@
-"""Multi-seed full fine-tuning of BERT-family classifiers (no PEFT)."""
+"""Multi-seed full fine-tuning of BERT-family classifiers (no PEFT).
+
+See Also:
+    `Advanced — Operations: Workflows <advanced/operations/workflows.md#training-bert>`_:
+        End-to-end walkthrough of :func:`run_family` and :func:`train_model`.
+"""
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
 # file, and public signatures type them as explicit `Any` boundaries.
@@ -37,9 +42,34 @@ from reddit.training.selection import select_median
 
 
 class BertSeedStrategy:
-    """Full fine-tuning of a BERT-family encoder classifier."""
+    """Full fine-tuning of a BERT-family encoder classifier.
+
+    Implements :class:`reddit.training.loop.SeedStrategy` for the encoder
+    families declared in ``config.yml`` (BERT base, FinBERT, InflaBERT).
+    Unlike :class:`reddit.training.llms.LlmSeedStrategy`, every parameter is
+    updated (no PEFT adapters, no quantization): :meth:`optimizers` defers
+    to the Trainer's own ``AdamW`` instead of the LoRA+ optimizer.
+
+    See Also:
+        :class:`reddit.training.llms.LlmSeedStrategy`: The sibling strategy
+            for QDoRA+/xQDoRA+ PEFT fine-tuning of decoder LLM classifiers.
+    """
 
     def build_model(self, ctx: SeedContext, bundle: DataBundle) -> tuple[Any, Any]:
+        """Load the base encoder checkpoint with a fresh classification head.
+
+        Args:
+            ctx: Run-scoped context.
+            bundle: Prepared gold dataset (only its label mapping is used
+                here, to size the classification head).
+
+        Returns:
+            A 2-tuple of ``(model, model_config)``, ready for training.
+
+        Notes:
+            Downloads/reads the base checkpoint from the Hugging Face Hub
+            cache (``ctx.hf_cache``) — network/disk I/O on cache miss.
+        """
         model_conf = AutoConfig.from_pretrained(
             ctx.model.id,
             num_labels=bundle.num_labels,
@@ -54,12 +84,32 @@ class BertSeedStrategy:
         return model, model_conf
 
     def parameter_counts(self, model: Any) -> tuple[int | None, int | None]:
+        """Return ``(trainable, total)`` parameter counts.
+
+        Args:
+            model: The encoder model returned by :meth:`build_model`.
+
+        Returns:
+            A 2-tuple of ``(trainable_parameters, total_parameters)``. Under
+            full fine-tuning both counts are equal (every parameter
+            requires grad), unlike the PEFT path.
+        """
         return (
             sum(p.numel() for p in model.parameters() if p.requires_grad),
             sum(p.numel() for p in model.parameters()),
         )
 
     def tokenize(self, ctx: SeedContext, bundle: DataBundle) -> Any:
+        """Tokenize every split of the gold dataset.
+
+        Args:
+            ctx: Run-scoped context supplying the tokenizer.
+            bundle: Prepared gold dataset with a ``"text"`` column.
+
+        Returns:
+            The tokenized ``DatasetDict``, truncated to
+            :data:`reddit.modeling.loading.BERT_MAX_LENGTH`.
+        """
         tokenizer = ctx.tokenizer
 
         def tokenize_batch(examples):
@@ -68,12 +118,31 @@ class BertSeedStrategy:
         return bundle.dataset.map(tokenize_batch, batched=True, desc="Tokenizing dataset")
 
     def data_collator(self, ctx: SeedContext) -> Any:
+        """Return a dynamic-padding collator aligned to 8-token multiples.
+
+        Args:
+            ctx: Run-scoped context supplying the tokenizer.
+
+        Returns:
+            A ``transformers.DataCollatorWithPadding`` instance.
+        """
         # Dynamic padding. Every example was previously padded to the full 512
         # tokens regardless of length, which on a corpus of short titles spent
         # most of the compute on padding.
         return DataCollatorWithPadding(tokenizer=ctx.tokenizer, pad_to_multiple_of=8, return_tensors="pt")
 
     def training_arguments(self, ctx: SeedContext) -> TrainingArguments:
+        """Build the ``TrainingArguments`` for one encoder fine-tuning run.
+
+        Args:
+            ctx: Run-scoped context (run name, cache directory, config).
+
+        Returns:
+            A populated ``transformers.TrainingArguments``, combining the
+            BERT-specific learning rate/epoch settings from
+            ``config.training.bert`` with the pass-through fields in
+            ``config.training.arguments``.
+        """
         bert = ctx.config.training.bert
         return TrainingArguments(
             run_name=ctx.run_name,
@@ -84,6 +153,21 @@ class BertSeedStrategy:
         )
 
     def optimizers(self, ctx: SeedContext, model: Any) -> tuple[Any, Any]:
+        """Defer to the Trainer's default ``(optimizer, scheduler)`` pair.
+
+        Full fine-tuning uses plain ``AdamW`` over every parameter; unlike
+        :meth:`reddit.training.llms.LlmSeedStrategy.optimizers`, there is no
+        LoRA+ asymmetric learning-rate split to configure.
+
+        Args:
+            ctx: Unused; accepted for :class:`reddit.training.loop.SeedStrategy`
+                interface parity.
+            model: Unused; accepted for interface parity.
+
+        Returns:
+            ``(None, None)``, signalling ``transformers.Trainer`` to build
+            its own optimizer and scheduler from ``TrainingArguments``.
+        """
         return (None, None)
 
 
