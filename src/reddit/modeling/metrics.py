@@ -41,9 +41,9 @@ def compute_metrics(eval_pred: Any) -> dict[str, float]:
 
     return {
         "accuracy": float(accuracy_score(labels, preds)),
-        "f1_weighted": float(f1_score(y_true=labels, y_pred=preds, average="weighted")),
-        "f1_macro": float(f1_score(y_true=labels, y_pred=preds, average="macro")),
-        "recall_macro": float(recall_score(y_true=labels, y_pred=preds, average="macro")),
-        "precision_macro": float(precision_score(y_true=labels, y_pred=preds, average="macro")),
+        "f1_weighted": float(f1_score(y_true=labels, y_pred=preds, average="weighted", zero_division=0)),
+        "f1_macro": float(f1_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
+        "recall_macro": float(recall_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
+        "precision_macro": float(precision_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
         "roc_auc": auc,
     }
