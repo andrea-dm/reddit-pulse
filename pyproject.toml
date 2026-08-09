@@ -32,11 +32,11 @@ flash = ["flash-attn"]
 reddit = "reddit.cli:main"
 
 [dependency-groups]
-dev = ["pytest", "hypothesis", "ruff", "pyright", "tach", "deptry"]
+dev = ["pytest", "hypothesis", "ruff", "pyright", "tach", "deptry", "pandas-stubs"]
 # CI groups (see .github/workflows/dependency-architecture-checks.yml):
 # `lint` runs ruff/pyright/tach/deptry; `test` is installed alongside the full
 # project so every sub-suite (including the torch-dependent ones) is collected.
-lint = ["ruff", "pyright", "tach", "deptry"]
+lint = ["ruff", "pyright", "tach", "deptry", "pandas-stubs"]
 test = ["pytest", "hypothesis", "pydantic>=2", "python-dotenv", "pyyaml", "pandas<3"]
 
 [build-system]

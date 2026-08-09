@@ -35,6 +35,7 @@ __pycache__/
 /labelled/
 /data/
 /notebooks/
+/backup/
 
 # Miscellaneous
 *.code-workspace
