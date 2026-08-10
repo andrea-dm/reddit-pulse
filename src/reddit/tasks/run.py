@@ -1,8 +1,7 @@
 """CLI task: the full pipeline (train -> select median seed -> label corpus).
 
-``reddit run --family gemma`` replaces ``legacy/scripts/launch_gemma.sh`` etc.;
 ``reddit train --family gemma`` is the same pipeline without the corpus
-labelling stage (the old ``train_llms.py``).
+labelling stage.
 
 This module is the composition root for training: it is the only place that
 knows about both the training pipelines and the inference labeller, which is
@@ -17,7 +16,12 @@ from reddit.core.config import Config
 
 
 def setup_run(parser: ArgumentParser) -> None:
-    """Register run/train-specific CLI arguments on the provided subparser."""
+    """Register run/train-specific CLI arguments on the provided subparser.
+
+    Args:
+        parser: The ``run``/``train`` subparser to add ``-f/--family``,
+            ``-l/--limit`` and ``--no-inference`` to (mutated in-place).
+    """
     parser.add_argument(
         "-f",
         "--family",
@@ -42,6 +46,10 @@ def setup_run(parser: ArgumentParser) -> None:
 
 def execute_run(args: Namespace, config: Config) -> int:
     """Run the training pipeline for the selected family.
+
+    Args:
+        args: Parsed CLI namespace (``family``, ``limit``, ``no_inference``).
+        config: Project configuration.
 
     Returns:
         The number of runs that produced a selected checkpoint.

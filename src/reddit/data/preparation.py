@@ -1,4 +1,18 @@
-"""Gold-dataset preparation: load, clean, stratified split, HF DatasetDict."""
+"""Gold-dataset preparation: load, clean, stratified split, HF DatasetDict.
+
+Prepares the hand-labelled seed dataset (``labelled.xlsx``) used as ground
+truth for fine-tuning: each row carries a Reddit submission title and its
+directional inflation-expectation label (``up``/``down``/``neutral``). This
+module only *consumes* that file; the human-in-the-loop process that
+produced its labels (manual annotation, zero-shot LLaMA-70B assistance,
+fine-tuned LLaMA-8B classification and ChatGPT-assisted adjudication of
+disagreements) is not part of this package.
+
+See Also:
+    :mod:`reddit.inference.corpus`: The full-corpus counterpart — labels
+        every row of the (much larger) unlabelled subreddit CSVs with a
+        checkpoint trained on the dataset this module prepares.
+"""
 
 # datasets and sklearn ship no type stubs; the Unknowns stay in this file.
 # pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false
@@ -20,7 +34,17 @@ from reddit.core.errors import UndeclaredLabelError
 
 @dataclass(frozen=True, slots=True)
 class DataBundle:
-    """The prepared gold dataset together with its label mapping."""
+    """The prepared gold dataset together with its label mapping.
+
+    Attributes:
+        dataset: Stratified ``train``/``validation``/``test`` splits, with a
+            ``"text"`` column and a ``"label"`` ``ClassLabel`` column.
+        num_labels: Number of distinct label classes (``3`` for the
+            directional up/down/neutral task).
+        id2label: Integer id to label-name mapping (``{0: "down", ...}``).
+        label2id: Label-name to integer id mapping (the inverse of
+            ``id2label``).
+    """
 
     dataset: DatasetDict
     num_labels: int
@@ -44,8 +68,31 @@ def load_and_prepare_data(
     decoded at inference time two independent sources of truth that agreed only
     because alphabetical order happened to match the configured ordering.
 
+    Args:
+        data_file_path: Path to the hand-labelled gold Excel file
+            (``config.dataset.path``, e.g. ``data/labelled.xlsx``).
+        text_column: Column holding the submission text to classify.
+        label_column: Column holding the directional label; values are
+            lower-cased before being mapped through ``labels.label2id``.
+        test_size: Fraction of the cleaned data held out as the test split.
+        validation_size: Fraction of the cleaned data held out as the
+            validation split (computed on the full dataset; internally
+            rescaled against the post-test-split remainder).
+        random_seed: Seed for both stratified splits — training reruns this
+            per fine-tuning seed (see :func:`reddit.training.loop.run_seeds`),
+            so each seed sees a different train/validation/test partition.
+        labels: The single label authority (``config.labels``); supplies
+            ``label2id``/``id2label`` and the declared label set.
+
+    Returns:
+        A :class:`DataBundle` with class-stratified train/validation/test
+        splits and the resolved label mapping.
+
     Raises:
         UndeclaredLabelError: the file contains a label the config does not declare.
+
+    Notes:
+        Reads ``data_file_path`` from disk (I/O) via ``pandas.read_excel``.
     """
     df = read_excel(data_file_path)
 

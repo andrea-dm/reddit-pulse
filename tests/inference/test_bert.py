@@ -79,7 +79,7 @@ class TestBertInferenceModule:
             assert all(job.family_suffix is None for job in jobs)
 
         def test_the_text_column_is_kept_in_the_labelled_output(self, config: Config) -> None:
-            """Legacy provenance: ``predict_bert.py`` kept the text column."""
+            """The text column is kept in the labelled output."""
             jobs = bert.build_jobs(config, "finbert")
 
             assert all(job.keep_text is True for job in jobs)
@@ -102,7 +102,7 @@ class TestBertInferenceModule:
             assert submissions.answer_file == "all_final_jae.csv"
 
         def test_comments_join_on_four_keys(self, config: Config) -> None:
-            """Legacy provenance: one key more than the LLM pipeline, deliberately."""
+            """One key more than the LLM pipeline, deliberately."""
             _, comments = bert.build_jobs(config, "finbert")
 
             assert comments.cols == ("created_utc_sub", "created_utc_com", "id_sub", "id_com")

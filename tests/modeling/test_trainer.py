@@ -75,7 +75,7 @@ class TestTrainerModule:
 
             loss = trainer.compute_loss(model, dict(batch))
 
-            assert float(loss) == pytest.approx(float(expected), rel=1e-6)
+            assert float(loss.detach()) == pytest.approx(float(expected.detach()), rel=1e-6)
 
         def test_class_weights_reproduce_the_weighted_mean(
             self, model: TinyClassifier, training_arguments: TrainingArguments, batch: dict[str, torch.Tensor]
@@ -86,7 +86,7 @@ class TestTrainerModule:
 
             loss = trainer.compute_loss(model, dict(batch))
 
-            assert float(loss) == pytest.approx(float(expected), rel=1e-6)
+            assert float(loss.detach()) == pytest.approx(float(expected.detach()), rel=1e-6)
 
         def test_weighting_shifts_the_loss_away_from_the_unweighted_one(
             self, model: TinyClassifier, training_arguments: TrainingArguments, batch: dict[str, torch.Tensor]
@@ -94,8 +94,8 @@ class TestTrainerModule:
             plain = WeightedLossTrainer(model=model, args=training_arguments)
             weighted = WeightedLossTrainer(model=model, args=training_arguments, class_weights=[1.0, 5.0, 9.0])
 
-            assert float(plain.compute_loss(model, dict(batch))) != pytest.approx(
-                float(weighted.compute_loss(model, dict(batch)))
+            assert float(plain.compute_loss(model, dict(batch)).detach()) != pytest.approx(
+                float(weighted.compute_loss(model, dict(batch)).detach())
             )
 
         def test_gradient_accumulation_normalises_by_the_effective_batch(
@@ -108,15 +108,15 @@ class TestTrainerModule:
 
             loss = trainer.compute_loss(model, dict(batch), num_items_in_batch=5)
 
-            assert float(loss) == pytest.approx(float(expected), rel=1e-6)
+            assert float(loss.detach()) == pytest.approx(float(expected.detach()), rel=1e-6)
 
         def test_the_accumulated_loss_scales_with_the_effective_batch_size(
             self, model: TinyClassifier, training_arguments: TrainingArguments, batch: dict[str, torch.Tensor]
         ) -> None:
             trainer = WeightedLossTrainer(model=model, args=training_arguments)
 
-            small = float(trainer.compute_loss(model, dict(batch), num_items_in_batch=5))
-            large = float(trainer.compute_loss(model, dict(batch), num_items_in_batch=10))
+            small = float(trainer.compute_loss(model, dict(batch), num_items_in_batch=5).detach())
+            large = float(trainer.compute_loss(model, dict(batch), num_items_in_batch=10).detach())
 
             assert small == pytest.approx(2 * large, rel=1e-6)
 
@@ -128,7 +128,7 @@ class TestTrainerModule:
             loss, outputs = trainer.compute_loss(model, dict(batch), return_outputs=True)
 
             assert outputs.logits.shape == (5, NUM_CLASSES)
-            assert float(loss) > 0
+            assert float(loss.detach()) > 0
 
         def test_the_returned_loss_is_differentiable(
             self, model: TinyClassifier, training_arguments: TrainingArguments, batch: dict[str, torch.Tensor]
@@ -148,7 +148,8 @@ class TestTrainerModule:
 
             loss = trainer.compute_loss(model, dict(single))
 
-            assert float(loss) == pytest.approx(float(F.cross_entropy(model(**single).logits, single["labels"])))
+            expected = F.cross_entropy(model(**single).logits, single["labels"])
+            assert float(loss.detach()) == pytest.approx(float(expected.detach()))
 
     @pytest.mark.integration
     class TestIntegration:
@@ -277,7 +278,7 @@ class TestTrainerModule:
 
             loss = trainer.compute_loss(model, dict(inputs))
 
-            assert float(loss) == pytest.approx(float(expected), rel=1e-5)
+            assert float(loss.detach()) == pytest.approx(float(expected.detach()), rel=1e-5)
 
         @settings(deadline=None, max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
         @given(
@@ -289,9 +290,9 @@ class TestTrainerModule:
         ) -> None:
             inputs = {"x": torch.ones(len(labels), FEATURES), "labels": torch.tensor(labels)}
             trainer = WeightedLossTrainer(model=model, args=training_arguments)
-            reference = float(trainer.compute_loss(model, dict(inputs), num_items_in_batch=1))
+            reference = float(trainer.compute_loss(model, dict(inputs), num_items_in_batch=1).detach())
 
-            loss = float(trainer.compute_loss(model, dict(inputs), num_items_in_batch=items))
+            loss = float(trainer.compute_loss(model, dict(inputs), num_items_in_batch=items).detach())
 
             assert loss == pytest.approx(reference / items, rel=1e-5)
 
@@ -307,6 +308,6 @@ class TestTrainerModule:
                 model=model, args=training_arguments, class_weights=[scale, 2 * scale, 3 * scale]
             )
 
-            assert float(base.compute_loss(model, dict(inputs))) == pytest.approx(
-                float(scaled.compute_loss(model, dict(inputs))), rel=1e-5
+            assert float(base.compute_loss(model, dict(inputs)).detach()) == pytest.approx(
+                float(scaled.compute_loss(model, dict(inputs)).detach()), rel=1e-5
             )

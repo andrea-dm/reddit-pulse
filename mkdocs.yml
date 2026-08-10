@@ -1,0 +1,109 @@
+site_name: reddit
+site_description: >-
+  Reddit inflation-direction labelling pipeline: QDoRA+/xQDoRA+ PEFT fine-tuning
+  of decoder LLMs and full fine-tuning of BERT-family encoders, and full-corpus
+  inference over r/economy, r/Economics and r/wallstreetbets.
+repo_url: https://github.com/andrea-del-monaco/reddit
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.emoji
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_options:
+              warn_missing_types: false
+            show_root_heading: true
+            show_source: true
+            show_bases: true
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+            docstring_section_style: table
+            members_order: source
+            filters: ["!^_"]
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting_started/index.md
+      - Installation: getting_started/installation.md
+      - Quickstart: getting_started/quickstart.md
+  - How To:
+      - how_to/index.md
+      - Using the CLI: how_to/using-the-cli.md
+      - Configuring a Run: how_to/configuring-a-run.md
+      - Preparing the Gold Dataset: how_to/preparing-the-gold-dataset.md
+      - Fine-Tuning Decoder LLMs: how_to/fine-tuning-decoder-llms.md
+      - Fine-Tuning BERT Encoders: how_to/fine-tuning-bert-encoders.md
+      - Labelling the Corpus: how_to/labelling-the-corpus.md
+  - Advanced:
+      - Implementation Design:
+          - advanced/implementation_design/index.md
+          - System Overview: advanced/implementation_design/system_overview.md
+          - Components: advanced/implementation_design/components.md
+          - Interfaces: advanced/implementation_design/interfaces.md
+          - Data Model: advanced/implementation_design/data_model.md
+          - Runtime Behavior: advanced/implementation_design/runtime_behavior.md
+          - Deployment: advanced/implementation_design/deployment.md
+          - Observability: advanced/implementation_design/observability.md
+          - Security: advanced/implementation_design/security.md
+      - Architecture Decision Records:
+          - advanced/architecture_decision_records/index.md
+          - "0001 - QDoRA+/xQDoRA+ PEFT recipe": advanced/architecture_decision_records/0001-qdora-plus-xqdora-plus-peft-recipe.md
+          - "0002 - Median-seed selection": advanced/architecture_decision_records/0002-median-seed-selection.md
+          - "0003 - Shared multi-seed loop via strategy pattern": advanced/architecture_decision_records/0003-shared-seed-loop-strategy-pattern.md
+          - "0004 - Training/inference boundary via tasks": advanced/architecture_decision_records/0004-training-inference-boundary-via-tasks.md
+      - Operations:
+          - advanced/operations/index.md
+          - Upstreams: advanced/operations/upstreams.md
+          - Downstreams: advanced/operations/downstreams.md
+          - Workflows: advanced/operations/workflows.md
+          - CI/CD: advanced/operations/ci_cd.md
+  - API Reference: api.md
+  - Changelog: changelog.md
+  - Contributing: contributing.md
+  - License: license.md

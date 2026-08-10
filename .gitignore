@@ -35,6 +35,14 @@ __pycache__/
 /labelled/
 /data/
 /notebooks/
+/backup/
+/work_in_progress/
+
+# MkDocs build output
+/site/
+
+# Secrets / local env
+.envrc
 
 # Miscellaneous
 *.code-workspace

@@ -1,9 +1,4 @@
-"""CLI task: inference-only labelling from saved checkpoints.
-
-``reddit predict --family gemma_27 --directory models`` replaces
-``legacy/scripts/launch_predict_llms.sh``; ``reddit predict --family bert
---directory models`` replaces ``legacy/scripts/launch_predict_bert.sh``.
-"""
+"""CLI task: inference-only labelling from saved checkpoints."""
 
 from __future__ import annotations
 
@@ -13,7 +8,12 @@ from reddit.core.config import Config
 
 
 def setup_predict(parser: ArgumentParser) -> None:
-    """Register predict-specific CLI arguments on the provided subparser."""
+    """Register predict-specific CLI arguments on the provided subparser.
+
+    Args:
+        parser: The ``predict`` subparser to add ``-f/--family`` and
+            ``-d/--directory`` to (mutated in-place).
+    """
     parser.add_argument(
         "-f",
         "--family",
@@ -35,6 +35,10 @@ def setup_predict(parser: ArgumentParser) -> None:
 
 def execute_predict(args: Namespace, config: Config) -> int:
     """Label the corpus with every matching checkpoint in the directory.
+
+    Args:
+        args: Parsed CLI namespace (``family``, ``directory``).
+        config: Project configuration.
 
     Returns:
         The number of checkpoints that were labelled.

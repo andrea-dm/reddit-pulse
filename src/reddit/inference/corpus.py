@@ -6,6 +6,20 @@ Previously copy-pasted (with drift) across ``run_llms_serial.py``,
 between the LLM and BERT variants are now explicit fields on
 :class:`CorpusJob`, built by kind-specific factories in
 ``reddit.inference.llms`` and ``reddit.inference.bert``.
+
+Notes:
+    This module assigns the directional label (``down``/``neutral``/``up``,
+    encoded ``-1``/``0``/``1`` — see :class:`reddit.core.config.LabelsConfig`)
+    to each row of the **already-filtered** per-subreddit submission/comment
+    CSVs (:data:`SUBREDDITS`). It is the inference half of the paper's
+    pipeline; the upstream keyword-lexicon filter, geographic classification
+    and comment-timeliness restriction that produce those CSVs are not part
+    of this package (see
+    `Advanced — Implementation Design: System Overview
+    <advanced/implementation_design/system_overview.md#scope-boundary>`_).
+    Aggregating the per-row directional labels into the daily/monthly
+    inflation-signal indicators described in the paper is likewise out of
+    scope here.
 """
 
 # transformers models/tokenizers are untyped; Unknowns stay in this file, and
@@ -34,6 +48,9 @@ from reddit.core.utils import dump_object
 
 # Lowercase: these interpolate into the on-disk corpus filenames, which are
 # lowercase; the previous "Economics" resolved only on case-insensitive mounts.
+# Rationale: the three subreddits studied in the paper (Del Monaco, Longo,
+# Marcucci & Tafani, "Reddit's 'pulse' on US inflation", Banca d'Italia QEF
+# 1028, June 2026) — r/Economics, r/economy and r/wallstreetbets.
 SUBREDDITS = ["economy", "economics", "wallstreetbets"]
 
 
@@ -43,7 +60,40 @@ class CorpusJob:
 
     Replaces the eighteen-parameter signature :func:`predict_corpus` used to
     carry.  Every LLM/BERT behavioural difference is a named field here, set
-    once by the factory that owns it.
+    once by the factory that owns it — see
+    :func:`reddit.inference.llms.build_jobs` and
+    :func:`reddit.inference.bert.build_jobs`.
+
+    Attributes:
+        name: Short job name (``"submissions"`` or ``"comments"``), used in
+            log messages only.
+        desc: Progress-bar description passed to ``tqdm``.
+        csv_format: Format string for the per-subreddit corpus filename,
+            e.g. ``"{}_final_jae.csv"``; interpolated with each entry of
+            :data:`SUBREDDITS`.
+        output_filename: Filename of the standalone labelled CSV written
+            under ``labels_dir``.
+        answer_file: Filename of the consolidated answers CSV (under
+            ``results_dir``) that new label/trend columns are merged into.
+        dump_file: Path of the crash-safety JSONL dump accumulated during
+            batched inference (see :func:`predict_corpus`).
+        label_col: Output column name for the decoded label string
+            (e.g. ``"down"``/``"neutral"``/``"up"``).
+        trend_col: Output column name for the decoded trend encoding
+            (``-1``/``0``/``1``, from :attr:`reddit.core.config.LabelsConfig.encodings`).
+        text_col: Input column holding the text to classify (submission
+            title or comment body).
+        cols: Join keys used both to select input columns and to merge the
+            labelled rows back into the answers file via :func:`update_answers`.
+        batch_size: Number of rows tokenized/classified per forward pass.
+        max_length: Tokenizer truncation length.
+        half: Cast the model to fp16 before inference (BERT path only; the
+            LLM path is already quantized).
+        keep_text: Keep ``text_col`` in the standalone labelled CSV. Always
+            dropped before the answers-file merge regardless of this flag.
+        family_suffix: When set, results are written to a per-family copy of
+            the answers file (LLM behaviour); when ``None``, the shared
+            answers file is updated in place (BERT behaviour).
     """
 
     name: str
@@ -71,8 +121,23 @@ def update_answers(output_file: Path, df_labelled: DataFrame, job: CorpusJob) ->
     LLM behaviour.  Without it, the answers file is updated in place — the
     BERT behaviour.
 
+    Args:
+        output_file: Base answers-file path (under ``results_dir``); the
+            actual write target may be a per-family copy, see above.
+        df_labelled: Freshly labelled rows for this job (mutated: the text
+            column is dropped from a local copy before merging, the input
+            frame itself is untouched).
+        job: Supplies the join keys (``job.cols``), the label/trend column
+            names, the text column to exclude, and ``family_suffix``.
+
     Raises:
         CorpusUnavailableError: the answers file to merge into does not exist.
+
+    Notes:
+        Reads and rewrites the target CSV (I/O). The write is atomic: the
+        merged frame is written to a sibling ``.tmp`` file and moved into
+        place with ``os.replace``, so a crash mid-write cannot corrupt the
+        previously accumulated answers file.
     """
     if job.family_suffix:
         target = output_file.parent / f"{output_file.stem}_{job.family_suffix}{output_file.suffix}"
@@ -129,6 +194,14 @@ def process_batch(
         labels: The single label authority (``id2label`` + ``encodings``).
         device: Device the model lives on.
         job: Supplies the truncation length and the output column names.
+
+    Returns:
+        One ``{job.label_col: <str>, job.trend_col: <int>}`` dict per input
+        text, in order, decoded via ``labels.id2label``/``labels.encodings``
+        (``"unknown"`` for any id absent from either mapping).
+
+    Notes:
+        Runs under ``torch.inference_mode()``; no gradients are tracked.
     """
     encoded = tokenizer(
         texts,
@@ -161,6 +234,14 @@ def _prepare_model_device(model: Any, job: CorpusJob) -> torch.device:
     dispatched by accelerate — calling ``.to("cuda")`` on them is at best a
     no-op and wrong for a multi-GPU shard, and the previous hardcoded
     ``"cuda"`` also crashed outright on CPU-only hosts.
+
+    Args:
+        model: The model to place, and to switch into eval mode.
+        job: ``job.half`` requests an fp16 cast for models not already
+            accelerate-dispatched (the BERT path).
+
+    Returns:
+        The ``torch.device`` inputs must be moved to before the forward pass.
     """
     if getattr(model, "hf_device_map", None) is None:
         model.to("cuda" if torch.cuda.is_available() else "cpu")
@@ -178,6 +259,22 @@ def predict_corpus(model: Any, tokenizer: Any, config: Config, job: CorpusJob, *
     it completes.  After all batches, the dump is reloaded once, the labelled
     table written to ``labels_dir``, then merged into the answers CSV via
     :func:`update_answers`.
+
+    Args:
+        model: Trained classification model (LLM or BERT checkpoint).
+        tokenizer: Matching tokenizer.
+        config: Project configuration; supplies ``paths.reddit_dir`` (the
+            per-subreddit corpus CSVs) and ``labels`` (the label authority).
+        job: Behavioural knobs for this pass — see :class:`CorpusJob`.
+        log: Human-oriented progress logger.
+
+    Notes:
+        Per-subreddit and per-batch failures are caught, logged, and
+        skipped rather than aborting the whole run: a missing or malformed
+        ``r/{subreddit}`` CSV skips only that subreddit, and a batch
+        exception skips only that batch. Reads one corpus CSV per
+        subreddit and writes/reloads ``job.dump_file`` (JSONL). Delegates
+        final persistence to :func:`_persist_labels`.
     """
     # Start from an empty dump. Appending to a previous run's records would
     # duplicate join keys and multiply rows in the merge performed below.
@@ -249,7 +346,13 @@ def predict_corpus(model: Any, tokenizer: Any, config: Config, job: CorpusJob, *
 
 
 def _persist_labels(config: Config, job: CorpusJob, *, log: LogFn) -> None:
-    """Reload the JSONL dump, save the labelled table and update the answers."""
+    """Reload the JSONL dump, save the labelled table and update the answers.
+
+    Reloads ``job.dump_file`` into a single frame, then persists it in two
+    independent, separately-guarded steps so a failure in the second (the
+    answers-file merge) cannot discard the first (the standalone labelled
+    CSV, the expensive artifact of the run): see :func:`update_answers`.
+    """
     df_labelled = DataFrame()
     try:
         with open(job.dump_file, "r", encoding="utf-8") as f:

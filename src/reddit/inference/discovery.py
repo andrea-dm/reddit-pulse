@@ -22,6 +22,24 @@ def iter_model_archives(
 
     Archives are extracted one at a time and the extraction folder is removed
     after the consumer advances the generator.
+
+    Args:
+        directory_path: Directory to scan for ``{model}_{method}_{seed}.zip``
+            archives (as produced by :func:`reddit.core.utils.archive_model`).
+        methods: Fine-tuning method tags to accept (matched against the
+            archive filename's second-to-last ``_``-separated component);
+            defaults to ``("qdora", "xqdora")``.
+
+    Yields:
+        ``(model_name, finetuning_method, unzip_path)`` for every archive
+        whose filename matches the ``{model}_{method}_{seed}.zip`` pattern
+        and whose method is in ``methods``.
+
+    Notes:
+        Each archive is extracted to a sibling directory and that directory
+        is removed (I/O) once the caller resumes the generator after
+        consuming a yielded item — so only one checkpoint's files are ever
+        on disk unzipped at a time.
     """
     parent_dir = Path(directory_path)
     if not parent_dir.is_dir():
@@ -54,7 +72,17 @@ def iter_model_archives(
 
 
 def iter_model_dirs(directory_path: str | Path) -> Generator[tuple[str, str], None, None]:
-    """Yield ``(model_name, path)`` from ``{model}_{seed}`` checkpoint directories."""
+    """Yield ``(model_name, path)`` from ``{model}_{seed}`` checkpoint directories.
+
+    Args:
+        directory_path: Directory to scan for ``{model}_{seed}`` checkpoint
+            directories (the BERT save layout; no fine-tuning-method
+            component since BERT models are fully fine-tuned, not PEFT).
+
+    Yields:
+        ``(model_name, path)`` for every subdirectory whose name matches the
+        ``{model}_{seed}`` pattern, in sorted order.
+    """
     parent_dir = Path(directory_path)
     if not parent_dir.is_dir():
         logging.error(f"Directory not found at '{directory_path}'")

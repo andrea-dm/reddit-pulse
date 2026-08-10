@@ -98,7 +98,7 @@ class TestLlmsInferenceModule:
             assert submissions.answer_file == "all_final_jae.csv"
 
         def test_comments_join_on_three_keys(self, config: Config) -> None:
-            """Legacy provenance: ``predict_llms.py`` used three keys, BERT uses four."""
+            """Three keys; the BERT pipeline uses four."""
             _, comments = llms.build_jobs(config, "gemma", "gemma2_9b", "qdora")
 
             assert comments.cols == ("created_utc_com", "id_sub", "id_com")

@@ -23,9 +23,24 @@ from reddit.core.utils import dump_object, now
 
 
 class WeightedLossTrainer(Trainer):
-    """Trainer applying class weights in the cross-entropy loss."""
+    """Trainer applying class weights in the cross-entropy loss.
+
+    Used by :func:`reddit.training.loop.run_seeds` for both the decoder-LLM
+    (PEFT) and BERT (full fine-tuning) pipelines, with class weights
+    balanced against the gold dataset's label distribution (down/neutral/up
+    are not necessarily equally represented).
+    """
 
     def __init__(self, *args, class_weights=None, **kwargs):
+        """Construct the trainer, moving ``class_weights`` onto the training device.
+
+        Args:
+            *args: Forwarded to ``transformers.Trainer``.
+            class_weights: Per-class loss weights (e.g. from
+                ``sklearn.utils.class_weight.compute_class_weight``), or
+                ``None`` for unweighted cross-entropy.
+            **kwargs: Forwarded to ``transformers.Trainer``.
+        """
         super().__init__(*args, **kwargs)
         if class_weights is not None:
             self.class_weights = torch.tensor(class_weights, dtype=torch.float).to(self.args.device)
@@ -33,6 +48,26 @@ class WeightedLossTrainer(Trainer):
             self.class_weights = None
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs) -> Any:
+        """Compute class-weighted cross-entropy loss, gradient-accumulation-safe.
+
+        Args:
+            model: The model being trained.
+            inputs: Batch inputs, including ``"labels"`` (popped from the dict).
+            return_outputs: Also return the model's forward-pass outputs.
+            num_items_in_batch: Effective batch size across accumulated
+                micro-batches, if gradient accumulation is active.
+            **kwargs: Forwarded to the base ``compute_loss`` call.
+
+        Returns:
+            The scalar loss, or ``(loss, outputs)`` if ``return_outputs``.
+
+        Notes:
+            Under gradient accumulation, pre-multiplies the summed loss by
+            the accumulation step count so the Trainer's subsequent
+            division by ``num_items_in_batch`` yields the true full-batch
+            average rather than an unweighted mean of per-micro-batch
+            means (see inline rationale below).
+        """
         # The base loss is discarded; only the forward pass output is needed.
         # Rationale: with return_outputs=True the base method returns a
         # (loss, outputs) tuple, but its declared type is the bare union.
@@ -71,6 +106,19 @@ class LogMetricsCallback(TrainerCallback):
     """Append validation metrics to a JSONL file at each logging step."""
 
     def __init__(self, log_dir: str | Path, model_name: str, seed: int, date: str, finetuning_method: str = "-"):
+        """Resolve the per-model JSONL log path and cache the run's metadata.
+
+        Args:
+            log_dir: Directory the JSONL log is written under.
+            model_name: Short model name, embedded in the log filename.
+            seed: Seed of the run this callback is attached to.
+            date: Run-date stamp, recorded in every logged record.
+            finetuning_method: Method label; ``"-"`` (BERT) omits the method
+                suffix from the log filename.
+
+        Notes:
+            Creates (touches) the JSONL log file on disk.
+        """
         super().__init__()
         ft = f"_{finetuning_method}" if finetuning_method != "-" else ""
         self.log_path = Path(log_dir) / f"{model_name}{ft}_training_logs.jsonl"
@@ -90,6 +138,25 @@ class LogMetricsCallback(TrainerCallback):
         logs: dict[str, float] | None = None,
         **kwargs,
     ) -> TrainerControl:
+        """Append one JSONL record for this logging step, if it is an eval log.
+
+        Args:
+            args: The active ``TrainingArguments``.
+            state: Current trainer state (epoch, global step).
+            control: Trainer control flags, returned unmodified.
+            logs: The metrics dict for this logging event, or ``None``.
+            **kwargs: Unused; accepted for base-class signature compatibility.
+
+        Returns:
+            ``control``, unmodified.
+
+        Notes:
+            Appends to ``self.log_path`` (I/O) only when ``logs`` contains
+            ``"eval_loss"`` and this is the main process
+            (``state.is_world_process_zero``); other logging events are
+            ignored. Errors writing the file are caught and printed rather
+            than raised, so a logging failure cannot abort training.
+        """
         # only evaluation logs (they contain 'eval_loss'), only from the main process
         if logs is not None and "eval_loss" in logs and state.is_world_process_zero:
             metrics: dict[str, object] = {
