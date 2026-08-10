@@ -58,16 +58,18 @@ pytest tests/ -q
 ## Usage
 
 ```bash
-reddit run     --family gemma     --gpu 0        # train + select + label corpus
-reddit run     --family test --limit 1 --gpu 0   # smoke test (1 seed)
-reddit train   --family gemma_27  --gpu 0        # train + select only
-reddit predict --family gemma_27 --directory models   # label with saved checkpoints
-reddit predict --family bert     --directory models
+reddit run     --family gemma       --gpu 0        # train + select + label corpus
+reddit run     --family test --limit 1 --gpu 0     # smoke test (1 seed)
+reddit train   --model gemma2_27b   --gpu 0        # train + select only, one model
+reddit predict --model gemma2_27b --directory models   # label with saved checkpoints
+reddit predict --family bert        --directory models
+reddit run     --all-families       --gpu 0        # every model in every family
 ```
 
-`--family` picks a group from `families:` in `config.yml`; `--gpu` sets
-`CUDA_VISIBLE_DEVICES`. The `*_part1` / `*_part2` families split a cohort
-across two GPUs — run one command per GPU.
+`--family`/`--model` accept one or more values and pick from `families:` in
+`config.yml`; `--all-families` (alias `--all-models`) runs everything.
+`--gpu` sets `CUDA_VISIBLE_DEVICES` — split a cohort across GPUs by giving
+each invocation a disjoint `--model` subset.
 
 ## Documentation
 
