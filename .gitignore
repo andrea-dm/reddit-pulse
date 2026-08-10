@@ -1,5 +1,3 @@
-# Archived pre-refactor scripts, flat src modules and yaml configs
-legacy/
 
 # Git
 .github/skills/
@@ -37,12 +35,12 @@ __pycache__/
 /notebooks/
 /backup/
 /work_in_progress/
+/tmp/
+legacy/
 
 # MkDocs build output
 /site/
 
 # Secrets / local env
 .envrc
-
-# Miscellaneous
 *.code-workspace
