@@ -65,8 +65,26 @@ class TestRunTaskModule:
             assert excinfo.value.code == 2
 
         def test_the_family_can_be_given_long_or_short(self, parser: ArgumentParser) -> None:
-            assert parser.parse_args(["-f", "gemma"]).family == "gemma"
-            assert parser.parse_args(["--family", "gemma"]).family == "gemma"
+            assert parser.parse_args(["-f", "gemma"]).family == ["gemma"]
+            assert parser.parse_args(["--family", "gemma"]).family == ["gemma"]
+
+        def test_the_family_accepts_multiple_values(self, parser: ArgumentParser) -> None:
+            assert parser.parse_args(["-f", "gemma", "bert"]).family == ["gemma", "bert"]
+
+        def test_the_model_accepts_multiple_values(self, parser: ArgumentParser) -> None:
+            args = parser.parse_args(["-m", "gemma-2b", "bert-base"])
+            assert args.model == ["gemma-2b", "bert-base"]
+            assert args.family is None
+
+        def test_all_families_and_all_models_set_the_same_flag(self, parser: ArgumentParser) -> None:
+            assert parser.parse_args(["--all-families"]).all_families is True
+            assert parser.parse_args(["--all-models"]).all_families is True
+
+        def test_family_model_and_all_families_are_mutually_exclusive(self, parser: ArgumentParser) -> None:
+            with pytest.raises(SystemExit):
+                parser.parse_args(["-f", "gemma", "-m", "bert-base"])
+            with pytest.raises(SystemExit):
+                parser.parse_args(["-f", "gemma", "--all-families"])
 
         def test_the_seed_limit_defaults_to_all_seeds(self, parser: ArgumentParser) -> None:
             assert parser.parse_args(["-f", "gemma"]).limit == 0
@@ -90,7 +108,7 @@ class TestRunTaskModule:
         def test_an_llm_family_runs_the_peft_pipeline(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            args = Namespace(family="llm_family", limit=0, no_inference=False)
+            args = Namespace(family=["llm_family"], model=None, all_families=False, limit=0, no_inference=False)
 
             produced = execute_run(args, bootstrapped_config)
 
@@ -101,14 +119,20 @@ class TestRunTaskModule:
         def test_an_llm_family_is_labelled_by_the_llm_labeller(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            execute_run(Namespace(family="llm_family", limit=0, no_inference=False), bootstrapped_config)
+            execute_run(
+                Namespace(family=["llm_family"], model=None, all_families=False, limit=0, no_inference=False),
+                bootstrapped_config,
+            )
 
             assert patched_pipelines["llm"].kwargs["labeller"] is inference_llms.label_corpus
 
         def test_a_bert_family_runs_the_full_finetuning_pipeline(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            produced = execute_run(Namespace(family="bert_family", limit=0, no_inference=False), bootstrapped_config)
+            produced = execute_run(
+                Namespace(family=["bert_family"], model=None, all_families=False, limit=0, no_inference=False),
+                bootstrapped_config,
+            )
 
             assert produced == 2
             assert patched_pipelines["llm"].calls == []
@@ -116,14 +140,20 @@ class TestRunTaskModule:
         def test_a_bert_family_is_labelled_by_the_bert_labeller(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            execute_run(Namespace(family="bert_family", limit=0, no_inference=False), bootstrapped_config)
+            execute_run(
+                Namespace(family=["bert_family"], model=None, all_families=False, limit=0, no_inference=False),
+                bootstrapped_config,
+            )
 
             assert patched_pipelines["bert"].kwargs["labeller"] is inference_bert.label_corpus
 
         def test_disabling_inference_injects_no_labeller(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            execute_run(Namespace(family="llm_family", limit=0, no_inference=True), bootstrapped_config)
+            execute_run(
+                Namespace(family=["llm_family"], model=None, all_families=False, limit=0, no_inference=True),
+                bootstrapped_config,
+            )
 
             assert patched_pipelines["llm"].kwargs["labeller"] is None
 
@@ -131,14 +161,17 @@ class TestRunTaskModule:
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
             """``reddit run`` never sets the flag; only ``reddit train`` does."""
-            execute_run(Namespace(family="llm_family", limit=0), bootstrapped_config)
+            execute_run(Namespace(family=["llm_family"], model=None, all_families=False, limit=0), bootstrapped_config)
 
             assert patched_pipelines["llm"].kwargs["labeller"] is inference_llms.label_corpus
 
         def test_the_seed_limit_is_forwarded(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            execute_run(Namespace(family="llm_family", limit=4, no_inference=False), bootstrapped_config)
+            execute_run(
+                Namespace(family=["llm_family"], model=None, all_families=False, limit=4, no_inference=False),
+                bootstrapped_config,
+            )
 
             assert patched_pipelines["llm"].kwargs["limit"] == 4
 
@@ -146,14 +179,17 @@ class TestRunTaskModule:
         def test_a_negative_limit_is_clamped_to_all_seeds(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder], limit: int
         ) -> None:
-            execute_run(Namespace(family="llm_family", limit=limit, no_inference=False), bootstrapped_config)
+            execute_run(
+                Namespace(family=["llm_family"], model=None, all_families=False, limit=limit, no_inference=False),
+                bootstrapped_config,
+            )
 
             assert patched_pipelines["llm"].kwargs["limit"] == 0
 
         def test_an_unknown_family_is_reported_before_any_import(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            args = Namespace(family="nope", limit=0, no_inference=False)
+            args = Namespace(family=["nope"], model=None, all_families=False, limit=0, no_inference=False)
 
             with pytest.raises(UnknownFamilyError):
                 execute_run(args, bootstrapped_config)
@@ -164,7 +200,10 @@ class TestRunTaskModule:
         def test_the_resolved_family_is_handed_to_the_pipeline(
             self, bootstrapped_config: Config, patched_pipelines: dict[str, Recorder]
         ) -> None:
-            execute_run(Namespace(family="single_method", limit=0, no_inference=False), bootstrapped_config)
+            execute_run(
+                Namespace(family=["single_method"], model=None, all_families=False, limit=0, no_inference=False),
+                bootstrapped_config,
+            )
 
             models = patched_pipelines["llm"].calls[0][0][1]
             assert models.finetuning_methods == ["xqdora"]
