@@ -152,7 +152,7 @@ class BertSeedStrategy:
             **ctx.config.training.arguments.model_dump(),
         )
 
-    def optimizers(self, ctx: SeedContext, model: Any) -> tuple[Any, Any]:
+    def optimizers(self, _ctx: SeedContext, _model: Any) -> tuple[Any, Any]:
         """Defer to the Trainer's default ``(optimizer, scheduler)`` pair.
 
         Full fine-tuning uses plain ``AdamW`` over every parameter; unlike
@@ -160,9 +160,9 @@ class BertSeedStrategy:
         LoRA+ asymmetric learning-rate split to configure.
 
         Args:
-            ctx: Unused; accepted for :class:`reddit.training.loop.SeedStrategy`
+            _ctx: Unused; accepted for :class:`reddit.training.loop.SeedStrategy`
                 interface parity.
-            model: Unused; accepted for interface parity.
+            _model: Unused; accepted for interface parity.
 
         Returns:
             ``(None, None)``, signalling ``transformers.Trainer`` to build
@@ -188,7 +188,7 @@ def train_model(
     log("Preparing...")
     t1 = monotonic_ns()
 
-    run_name = f"{model.name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_name = f"{model.name}_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}"
 
     cache_dir = config.paths.cache_dir / run_name
     hf_cache = config.hf_home / model.name
