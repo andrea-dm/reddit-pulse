@@ -44,8 +44,5 @@ __pycache__/
 # Secrets / local env
 .envrc
 
-# Secrets / local env
-.envrc
-
 # Miscellaneous
 *.code-workspace
