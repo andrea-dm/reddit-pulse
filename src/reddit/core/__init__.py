@@ -8,6 +8,7 @@ from reddit.core.errors import (
     RedditError,
     UndeclaredLabelError,
     UnknownFamilyError,
+    UnknownModelError,
     UnsupportedMethodError,
 )
 from reddit.core.logging import print_log, setup_logging
@@ -24,6 +25,7 @@ __all__ = [
     "RedditError",
     "UndeclaredLabelError",
     "UnknownFamilyError",
+    "UnknownModelError",
     "UnsupportedMethodError",
     "bootstrap_directories",
     "load_config",

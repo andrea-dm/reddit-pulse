@@ -31,6 +31,16 @@ class UnknownFamilyError(ConfigError, KeyError):
         return self.args[0] if self.args else ""
 
 
+class UnknownModelError(ConfigError, KeyError):
+    """``--model`` names a model that no declared family contains.
+
+    Also a :class:`KeyError`, for symmetry with :class:`UnknownFamilyError`.
+    """
+
+    def __str__(self) -> str:  # KeyError.__str__ would add quotes around the message
+        return self.args[0] if self.args else ""
+
+
 class UnsupportedMethodError(ConfigError):
     """A declared fine-tuning method has no implementation registered."""
 
