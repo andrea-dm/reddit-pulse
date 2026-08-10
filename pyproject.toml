@@ -1,6 +1,6 @@
 [project]
 name = "reddit"
-version = "1.0.0"
+version = "1.1.0"
 description = "Reddit inflation-direction labelling: PEFT fine-tuning of LLM/BERT directional (UP/DOWN/NEUTRAL) classifiers and full-corpus inference over r/economy, r/Economics and r/wallstreetbets."
 readme = "README.md"
 license = "MIT"
