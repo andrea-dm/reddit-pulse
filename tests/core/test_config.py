@@ -34,7 +34,7 @@ from reddit.core.config import (
     TrainingConfig,
     load_config,
 )
-from reddit.core.errors import ConfigError, UnknownFamilyError
+from reddit.core.errors import ConfigError, UnknownFamilyError, UnknownModelError
 
 LABEL_NAMES = st.text(alphabet="abcdefghijklmnopqrstuvwxyz_", min_size=1, max_size=8)
 PATH_FIELDS = tuple(PathsConfig.model_fields)
@@ -107,18 +107,17 @@ class TestConfigModule:
                 setattr(target, field, value)
 
         def test_shipped_config_declares_every_documented_family(self, project_config: Config) -> None:
-            for name in ["bert", "gemma", "gemma_27", "llama", "qwen", "test"]:
+            for name in ["bert", "gemma", "llama", "qwen", "test"]:
                 models = project_config.family(name)
                 assert models.models, name
                 assert all(m.name and m.id for m in models.models), name
 
             assert project_config.family("bert").kind == "bert"
 
-            gemma = project_config.family("gemma_27")
+            gemma = project_config.family("gemma")
             assert gemma.kind == "llm"
             assert gemma.finetuning_methods == ["qdora", "xqdora"]
-
-            assert project_config.family("medium_part2").finetuning_methods == ["xqdora"]
+            assert "gemma2_27b" in [m.name for m in gemma.models]
 
         # ─────────────────────────────────────── label authority validation ──
 
@@ -322,6 +321,60 @@ class TestConfigModule:
             assert config.families == {}
             with pytest.raises(UnknownFamilyError):
                 config.family("anything")
+
+        # ───────────────────────────────── multi-family/model CLI selection ──
+
+        def test_resolve_families_with_none_returns_every_family(self, config: Config) -> None:
+            resolved = config.resolve_families(None)
+
+            assert {m.family for m in resolved} == {"llm_family", "bert_family", "single_method"}
+
+        def test_resolve_families_resolves_only_the_named_ones(self, config: Config) -> None:
+            resolved = config.resolve_families(["bert_family"])
+
+            assert [m.family for m in resolved] == ["bert_family"]
+
+        def test_resolve_families_rejects_an_unknown_name(self, config: Config) -> None:
+            with pytest.raises(UnknownFamilyError):
+                config.resolve_families(["nope"])
+
+        def test_resolve_models_groups_matches_by_family(self, config_factory: Callable[..., Config]) -> None:
+            config = config_factory(
+                families={
+                    "llm_family": {"models": [{"name": "tiny_llm", "id": "acme/tiny-llm"}]},
+                    "bert_family": {
+                        "kind": "bert",
+                        "models": [{"name": "tiny_bert", "id": "acme/tiny-bert"}],
+                    },
+                }
+            )
+
+            resolved = config.resolve_models(["tiny_llm", "tiny_bert"])
+
+            by_family = {m.family: [s.name for s in m.models] for m in resolved}
+            assert by_family == {"llm_family": ["tiny_llm"], "bert_family": ["tiny_bert"]}
+
+        def test_resolve_models_carries_the_owning_familys_kind_and_methods(self, config: Config) -> None:
+            resolved = config.resolve_models(["tiny_bert"])
+
+            assert resolved[0].kind == "bert"
+
+        def test_resolve_models_rejects_an_unknown_name(self, config: Config) -> None:
+            with pytest.raises(UnknownModelError):
+                config.resolve_models(["nope"])
+
+        def test_resolve_models_rejects_a_name_declared_by_more_than_one_family(
+            self, config_factory: Callable[..., Config]
+        ) -> None:
+            config = config_factory(
+                families={
+                    "a": {"models": [{"name": "shared", "id": "acme/shared"}]},
+                    "b": {"models": [{"name": "shared", "id": "acme/shared"}]},
+                }
+            )
+
+            with pytest.raises(UnknownModelError, match="Ambiguous"):
+                config.resolve_models(["shared"])
 
         # ──────────────────────────────────────── hf_home precedence rules ──
 

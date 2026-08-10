@@ -14,8 +14,11 @@ Examples:
     Typical invocations from the project root::
 
         reddit run --family gemma --gpu 0
+        reddit run --family gemma bert --gpu 0
+        reddit run --model gemma2_2b bert_base --gpu 0
+        reddit run --all-families --gpu 0
         reddit run --family test --limit 1 --gpu 0
-        reddit train --family gemma_27 --gpu 0
+        reddit train --model gemma2_27b --gpu 0
         reddit predict --family bert --directory models
         python -m reddit --help
 """
@@ -36,6 +39,7 @@ from reddit.core.errors import ConfigError, RedditError
 from reddit.core.logging import setup_logging
 from reddit.tasks.predict import execute_predict, setup_predict
 from reddit.tasks.run import execute_run, setup_run
+from reddit.tasks.selection import selection_log_name
 
 DEFAULT_CONFIG = "config.yml"
 
@@ -127,8 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     # Logging first: `prepare_environment` warns about a missing Hugging Face
     # token, and that warning must reach the log file rather than an unhandled
     # root logger.
-    family = getattr(args, "family", None)
-    log_name = f"{args.command}_{family}.log" if family else f"{args.command}.log"
+    selection = selection_log_name(args)
+    log_name = f"{args.command}_{selection}.log" if selection else f"{args.command}.log"
     setup_logging(log_file=config.paths.logs_dir / log_name)
     logging.info(f"Loaded config from `{config_path}`.")
 
@@ -150,8 +154,8 @@ def main(argv: list[str] | None = None) -> int:
         # Unknown family, unsupported method, undeclared label: user-fixable
         # configuration problems deserve a message, not a traceback.
         parser.error(str(e))
-    except RedditError as e:
-        logging.error(str(e), exc_info=True)
+    except RedditError:
+        logging.exception(f"`{args.command}` failed")
         return 1
 
     if not produced:

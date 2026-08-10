@@ -13,6 +13,7 @@ from __future__ import annotations
 from argparse import ArgumentParser, Namespace
 
 from reddit.core.config import Config
+from reddit.tasks.selection import add_selection_arguments, resolve_selection
 
 
 def setup_run(parser: ArgumentParser) -> None:
@@ -20,15 +21,10 @@ def setup_run(parser: ArgumentParser) -> None:
 
     Args:
         parser: The ``run``/``train`` subparser to add ``-f/--family``,
-            ``-l/--limit`` and ``--no-inference`` to (mutated in-place).
+            ``-m/--model``, ``--all-families``, ``-l/--limit`` and
+            ``--no-inference`` to (mutated in-place).
     """
-    parser.add_argument(
-        "-f",
-        "--family",
-        type=str,
-        required=True,
-        help="Model family from the config's `families:` section (e.g. gemma, gemma_27, bert, test).",
-    )
+    add_selection_arguments(parser)
     parser.add_argument(
         "-l",
         "--limit",
@@ -45,30 +41,34 @@ def setup_run(parser: ArgumentParser) -> None:
 
 
 def execute_run(args: Namespace, config: Config) -> int:
-    """Run the training pipeline for the selected family.
+    """Run the training pipeline for every selected family.
 
     Args:
-        args: Parsed CLI namespace (``family``, ``limit``, ``no_inference``).
+        args: Parsed CLI namespace (``family``, ``model``, ``all_families``,
+            ``limit``, ``no_inference``).
         config: Project configuration.
 
     Returns:
-        The number of runs that produced a selected checkpoint.
+        The total number of runs that produced a selected checkpoint, across
+        every selected family.
     """
-    models = config.family(args.family)
     with_inference = not getattr(args, "no_inference", False)
 
-    # Import pipelines only now: the environment (CUDA_VISIBLE_DEVICES,
-    # HF_HOME) must be prepared before torch is imported.
-    if models.kind == "bert":
-        from reddit.inference.bert import label_corpus
-        from reddit.training.bert import run_family
-    else:
-        from reddit.inference.llms import label_corpus
-        from reddit.training.llms import run_family
+    produced = 0
+    for models in resolve_selection(args, config):
+        # Import pipelines only now: the environment (CUDA_VISIBLE_DEVICES,
+        # HF_HOME) must be prepared before torch is imported.
+        if models.kind == "bert":
+            from reddit.inference.bert import label_corpus
+            from reddit.training.bert import run_family
+        else:
+            from reddit.inference.llms import label_corpus
+            from reddit.training.llms import run_family
 
-    return run_family(
-        config,
-        models,
-        labeller=label_corpus if with_inference else None,
-        limit=max(0, args.limit),
-    )
+        produced += run_family(
+            config,
+            models,
+            labeller=label_corpus if with_inference else None,
+            limit=max(0, args.limit),
+        )
+    return produced

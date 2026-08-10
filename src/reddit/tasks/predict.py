@@ -5,22 +5,17 @@ from __future__ import annotations
 from argparse import ArgumentParser, Namespace
 
 from reddit.core.config import Config
+from reddit.tasks.selection import add_selection_arguments, resolve_selection
 
 
 def setup_predict(parser: ArgumentParser) -> None:
     """Register predict-specific CLI arguments on the provided subparser.
 
     Args:
-        parser: The ``predict`` subparser to add ``-f/--family`` and
-            ``-d/--directory`` to (mutated in-place).
+        parser: The ``predict`` subparser to add ``-f/--family``, ``-m/--model``,
+            ``--all-families`` and ``-d/--directory`` to (mutated in-place).
     """
-    parser.add_argument(
-        "-f",
-        "--family",
-        type=str,
-        required=True,
-        help="Model family from the config's `families:` section; only checkpoints of its models are used.",
-    )
+    add_selection_arguments(parser)
     parser.add_argument(
         "-d",
         "--directory",
@@ -37,18 +32,19 @@ def execute_predict(args: Namespace, config: Config) -> int:
     """Label the corpus with every matching checkpoint in the directory.
 
     Args:
-        args: Parsed CLI namespace (``family``, ``directory``).
+        args: Parsed CLI namespace (``family``, ``model``, ``all_families``, ``directory``).
         config: Project configuration.
 
     Returns:
-        The number of checkpoints that were labelled.
+        The total number of checkpoints that were labelled, across every selected family.
     """
-    models = config.family(args.family)
+    labelled = 0
+    for models in resolve_selection(args, config):
+        # Deferred import: environment must be prepared before torch loads.
+        if models.kind == "bert":
+            from reddit.inference.bert import predict_from_directories as predict_fn
+        else:
+            from reddit.inference.llms import predict_from_archives as predict_fn
 
-    # Deferred import: environment must be prepared before torch loads.
-    if models.kind == "bert":
-        from reddit.inference.bert import predict_from_directories as predict_fn
-    else:
-        from reddit.inference.llms import predict_from_archives as predict_fn
-
-    return predict_fn(config, models, args.directory)
+        labelled += predict_fn(config, models, args.directory)
+    return labelled

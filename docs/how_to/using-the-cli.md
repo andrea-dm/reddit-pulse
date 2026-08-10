@@ -28,13 +28,22 @@ for the full expected output.
 
 ## Subcommands
 
-- **`reddit run -f <family>`** — train every model in `<family>` over every
-  configured seed, select the median seed per (model, method), then label
-  the corpus (unless `--no-inference`).
-- **`reddit train -f <family>`** — identical to `run`, but always skips
+- **`reddit run -f <family>...`** — train every model in the given
+  family/families over every configured seed, select the median seed per
+  (model, method), then label the corpus (unless `--no-inference`).
+- **`reddit train -f <family>...`** — identical to `run`, but always skips
   corpus labelling (equivalent to `run --no-inference`).
-- **`reddit predict -f <family> -d <directory>`** — label the corpus using
+- **`reddit predict -f <family>... -d <directory>`** — label the corpus using
   checkpoints already present in `<directory>`, without training anything.
+
+Every subcommand selects which models to act on via one — and only one — of:
+
+- **`-f/--family <name>...`** — one or more families from `families:`.
+- **`-m/--model <name>...`** — one or more model names, looked up across
+  every declared family. A name declared by more than one family is
+  rejected as ambiguous; use `-f` instead in that case.
+- **`--all-families`** (alias `--all-models`) — every model in every
+  declared family.
 
 ## Embedded usage
 

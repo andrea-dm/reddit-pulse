@@ -110,7 +110,7 @@ class SeedStrategy(Protocol):
         """Return the fully populated ``TrainingArguments``."""
         ...
 
-    def optimizers(self, ctx: SeedContext, model: Any) -> tuple[Any, Any]:
+    def optimizers(self, ctx: SeedContext, model: Any, /) -> tuple[Any, Any]:
         """Return the ``(optimizer, scheduler)`` pair."""
         ...
 

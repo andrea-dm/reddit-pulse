@@ -19,12 +19,14 @@ Encoders](fine-tuning-bert-encoders.md).
 ## Minimal example
 
 ```bash
-reddit train --family gemma_27 --gpu 0
+reddit train --model gemma2_27b --gpu 0
 ```
 
-Fine-tunes `gemma2_27b` with both `qdora` and `xqdora` (the family's
-default methods) over every seed in `config.training.seeds`, then keeps
-only the median-performing (by test weighted F1) checkpoint per method.
+Fine-tunes `gemma2_27b` with both `qdora` and `xqdora` (the `gemma`
+family's default methods) over every seed in `config.training.seeds`, then
+keeps only the median-performing (by test weighted F1) checkpoint per
+method. `--model` picks the one model out of its family without touching
+its siblings; `--family gemma` would run all of `gemma`'s models instead.
 
 ## Embedded usage
 
@@ -33,7 +35,7 @@ from reddit.core.config import load_config
 from reddit.training.llms import run_family
 
 config = load_config("config.yml")
-models = config.family("gemma_27")
+models = config.resolve_models(["gemma2_27b"])[0]
 selected = run_family(config, models, labeller=None, limit=1)  # train-only, 1 seed
 ```
 

@@ -61,8 +61,21 @@ class TestPredictTaskModule:
             short = parser.parse_args(["-f", "gemma", "-d", "models"])
             long = parser.parse_args(["--family", "gemma", "--directory", "models"])
 
-            assert (short.family, short.directory) == ("gemma", "models")
-            assert (long.family, long.directory) == ("gemma", "models")
+            assert (short.family, short.directory) == (["gemma"], "models")
+            assert (long.family, long.directory) == (["gemma"], "models")
+
+        def test_the_family_accepts_multiple_values(self, parser: ArgumentParser) -> None:
+            args = parser.parse_args(["-f", "gemma", "bert", "-d", "models"])
+            assert args.family == ["gemma", "bert"]
+
+        def test_the_model_accepts_multiple_values(self, parser: ArgumentParser) -> None:
+            args = parser.parse_args(["-m", "gemma-2b", "bert-base", "-d", "models"])
+            assert args.model == ["gemma-2b", "bert-base"]
+            assert args.family is None
+
+        def test_all_families_and_all_models_set_the_same_flag(self, parser: ArgumentParser) -> None:
+            assert parser.parse_args(["--all-families", "-d", "models"]).all_families is True
+            assert parser.parse_args(["--all-models", "-d", "models"]).all_families is True
 
         def test_the_directory_is_kept_as_written(self, parser: ArgumentParser) -> None:
             """Relative paths are resolved by the discovery iterators, not here."""
@@ -73,7 +86,7 @@ class TestPredictTaskModule:
         def test_an_llm_family_is_labelled_from_archives(
             self, bootstrapped_config: Config, patched_discovery: dict[str, Recorder]
         ) -> None:
-            args = Namespace(family="llm_family", directory="models")
+            args = Namespace(family=["llm_family"], model=None, all_families=False, directory="models")
 
             labelled = execute_predict(args, bootstrapped_config)
 
@@ -83,7 +96,7 @@ class TestPredictTaskModule:
         def test_a_bert_family_is_labelled_from_checkpoint_directories(
             self, bootstrapped_config: Config, patched_discovery: dict[str, Recorder]
         ) -> None:
-            args = Namespace(family="bert_family", directory="models")
+            args = Namespace(family=["bert_family"], model=None, all_families=False, directory="models")
 
             labelled = execute_predict(args, bootstrapped_config)
 
@@ -93,14 +106,20 @@ class TestPredictTaskModule:
         def test_the_directory_is_forwarded_verbatim(
             self, bootstrapped_config: Config, patched_discovery: dict[str, Recorder]
         ) -> None:
-            execute_predict(Namespace(family="llm_family", directory="/data/models"), bootstrapped_config)
+            execute_predict(
+                Namespace(family=["llm_family"], model=None, all_families=False, directory="/data/models"),
+                bootstrapped_config,
+            )
 
             assert patched_discovery["archives"].calls[0][2] == "/data/models"
 
         def test_the_resolved_family_is_handed_to_the_discovery(
             self, bootstrapped_config: Config, patched_discovery: dict[str, Recorder]
         ) -> None:
-            execute_predict(Namespace(family="single_method", directory="models"), bootstrapped_config)
+            execute_predict(
+                Namespace(family=["single_method"], model=None, all_families=False, directory="models"),
+                bootstrapped_config,
+            )
 
             config_arg, models_arg, _ = patched_discovery["archives"].calls[0]
             assert config_arg is bootstrapped_config
@@ -109,7 +128,7 @@ class TestPredictTaskModule:
         def test_an_unknown_family_is_reported_before_any_import(
             self, bootstrapped_config: Config, patched_discovery: dict[str, Recorder]
         ) -> None:
-            args = Namespace(family="nope", directory="models")
+            args = Namespace(family=["nope"], model=None, all_families=False, directory="models")
 
             with pytest.raises(UnknownFamilyError):
                 execute_predict(args, bootstrapped_config)
