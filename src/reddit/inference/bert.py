@@ -1,7 +1,8 @@
 """Corpus labelling with fully fine-tuned BERT-family classifiers.
 
-Replaces ``legacy/scripts/predict_bert.py`` and the inference half of
-``legacy/scripts/run_bert_serial.py``.
+Runs the fully fine-tuned encoder classifiers (BERT base, FinBERT,
+InflaBERT — no PEFT) over the corpus, using the shared batching/
+crash-safety machinery in :mod:`reddit.inference.corpus`.
 """
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
@@ -34,7 +35,21 @@ from reddit.modeling.loading import BERT_MAX_LENGTH, bert_model_args
 
 
 def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
-    """The submissions/comments labelling passes for a BERT checkpoint."""
+    """The submissions/comments labelling passes for a BERT checkpoint.
+
+    Args:
+        config: Project configuration (``inference.submissions``/``.comments``
+            gate which jobs are built; ``inference.batch_size`` sizes them).
+        model_name: Short model name (e.g. ``"finbert"``), used to derive
+            output/label column names.
+
+    Returns:
+        Zero, one, or two :class:`reddit.inference.corpus.CorpusJob`
+        instances (submissions and/or comments), per the ``inference``
+        config toggles. Unlike :func:`reddit.inference.llms.build_jobs`,
+        these jobs update the shared answers file in place (no
+        ``family_suffix``) and keep the text column in the labelled CSV.
+    """
     label_col = f"{model_name}_label"
     trend_col = f"{model_name}_trend"
     desc = f"Predicting with {model_name}"
@@ -56,9 +71,8 @@ def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
                 batch_size=config.inference.batch_size,
                 max_length=BERT_MAX_LENGTH,
                 half=True,
-                # Legacy provenance: `predict_bert.py` kept the text column in
-                # the labelled CSV. It is still dropped before the answers
-                # merge — see `update_answers`.
+                # The text column is kept in the labelled CSV, but dropped
+                # before the answers merge — see `update_answers`.
                 keep_text=True,
             )
         )
@@ -74,9 +88,8 @@ def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
                 label_col=label_col,
                 trend_col=trend_col,
                 text_col="body_com",
-                # Legacy provenance: `predict_bert.py` joined comments on these
-                # four keys, one more than the LLM pipeline. The divergence is
-                # deliberate and preserved.
+                # Comments join on these four keys, one more than the LLM
+                # pipeline. The divergence is deliberate and preserved.
                 cols=("created_utc_sub", "created_utc_com", "id_sub", "id_com"),
                 batch_size=config.inference.batch_size,
                 max_length=BERT_MAX_LENGTH,
@@ -104,6 +117,20 @@ def label_corpus(
     the LLM labeller (see :class:`reddit.core.protocols.Labeller`); they do not
     influence the BERT jobs (answer files are updated in place and the output
     columns carry no method suffix), so they are only recorded in the log.
+
+    Args:
+        config: Project configuration.
+        family: Unused by the BERT jobs; recorded in the log only.
+        model_name: Short model name.
+        model_path: Filesystem path to the selected (median-seed) checkpoint.
+        model_conf: The ``AutoConfig`` matching ``model_path``.
+        tokenizer: Tokenizer matching ``model_path``.
+        finetuning_method: Unused by the BERT jobs; recorded in the log only.
+        log: Human-oriented progress logger.
+
+    Notes:
+        Loads the checkpoint and reads/writes the corpus and answers files
+        transitively via :func:`reddit.inference.corpus.predict_corpus`.
     """
     logging.info(f"Labelling... (family=`{family or '-'}`, method=`{finetuning_method}`)")
     t1_task = monotonic_ns()
@@ -122,6 +149,12 @@ def label_corpus(
 
 
 def _predict_one(config: Config, models: Models, model_name: str, model_path: str, log: LogFn) -> None:
+    """Load one checkpoint, label the corpus with it, then clean up caches.
+
+    Builds the tokenizer/config from ``model_path``, delegates to
+    :func:`label_corpus`, and finally removes the per-run cache directory
+    and this model's Hugging Face Hub cache regardless of outcome.
+    """
     run_name = f"predicting_{model_name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     cache_dir = config.paths.cache_dir / run_name
@@ -170,6 +203,12 @@ def predict_from_directories(config: Config, models: Models, directory: str | Pa
     """Label the corpus with every ``{model}_{seed}`` checkpoint directory found.
 
     Only directories whose model name appears in the selected family are used.
+
+    Args:
+        config: Project configuration.
+        models: The resolved family selection.
+        directory: Directory to scan for checkpoint directories (see
+            :func:`reddit.inference.discovery.iter_model_dirs`).
 
     Returns:
         The number of checkpoints that were labelled.

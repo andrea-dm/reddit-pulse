@@ -39,7 +39,20 @@ from reddit.modeling.trainer import LogMetricsCallback, WeightedLossTrainer
 
 @dataclass(frozen=True, slots=True)
 class SeedContext:
-    """Everything one (model, method) run needs that does not vary per seed."""
+    """Everything one (model, method) run needs that does not vary per seed.
+
+    Attributes:
+        config: Project configuration.
+        models: The resolved family selection this model belongs to.
+        model: The specific model spec (name + hub id) being fine-tuned.
+        finetuning_method: ``"qdora"``/``"xqdora"`` for LLMs, ``"-"`` for BERT.
+        run_name: Unique run identifier, embedded in log/output paths.
+        cache_dir: Per-run training cache directory (``TrainingArguments.output_dir``).
+        hf_cache: Hugging Face Hub cache directory for this model.
+        seeds: Every seed this (model, method) run will iterate over.
+        tokenizer: Tokenizer shared across all seeds of this run.
+        log: Human-oriented progress logger.
+    """
 
     config: Config
     models: Models
@@ -55,7 +68,17 @@ class SeedContext:
 
 @dataclass(frozen=True, slots=True)
 class SeedResult:
-    """Outcome of fine-tuning one seed."""
+    """Outcome of fine-tuning one seed.
+
+    Attributes:
+        seed: The random seed used for this run (split + ``set_seed``).
+        performance: Test-split weighted F1 (``float("nan")`` if unavailable),
+            the ranking key for :func:`reddit.training.selection.select_median`.
+        method: Fine-tuning method label (mirrors :attr:`SeedContext.finetuning_method`).
+        model: Path to the saved checkpoint for this seed.
+        config: The ``AutoConfig`` matching ``model``, kept so the selected
+            checkpoint can be reloaded without re-deriving it.
+    """
 
     seed: int
     performance: float
@@ -93,7 +116,12 @@ class SeedStrategy(Protocol):
 
 
 def _announce(ctx: SeedContext, message: str) -> None:
-    """Emit a progress line to both the per-run log file and the root logger."""
+    """Emit a progress line to both the per-run log file and the root logger.
+
+    Notes:
+        Writes to the per-run log file (via ``ctx.log``, I/O) and to the
+        root logger (I/O).
+    """
     ctx.log(message, level="info")
     logging.info(message)
 
@@ -108,7 +136,22 @@ def _metrics_record(
     raw: dict[str, Any],
     prefix: str,
 ) -> dict[str, Any]:
-    """Assemble one JSONL metrics record, stripping the split prefix from keys."""
+    """Assemble one JSONL metrics record, stripping the split prefix from keys.
+
+    Args:
+        ctx: Run-scoped context (model/method/config identity).
+        seed: The seed this record belongs to.
+        split: ``"train"`` (validation metrics) or ``"test"``.
+        walltime: Training wall-clock time in nanoseconds for this seed.
+        trainable: Trainable parameter count, or ``None`` if unavailable.
+        total: Total parameter count, or ``None`` if unavailable.
+        raw: The raw metrics dict from the Trainer (``eval_``/``test_``-prefixed keys).
+        prefix: The key prefix to strip (``"eval_"`` or ``"test_"``).
+
+    Returns:
+        A flat dict combining run identity, parameter counts and the
+        de-prefixed metric values, ready for :func:`reddit.core.utils.dump_object`.
+    """
     return {
         "inserted": Timestamp.now("Europe/Rome").strftime("%Y-%m-%d.%H:%M:%S"),
         "date": ctx.config.system.date,
@@ -123,7 +166,35 @@ def _metrics_record(
 
 
 def run_seeds(ctx: SeedContext, strategy: SeedStrategy) -> dict[int, SeedResult]:
-    """Fine-tune one model with one method over every configured seed."""
+    """Fine-tune one model with one method over every configured seed.
+
+    For each seed in ``ctx.seeds``: reloads and re-splits the gold dataset
+    (:func:`reddit.data.preparation.load_and_prepare_data`, seeded so every
+    seed sees a different stratified train/validation/test partition),
+    builds the model and optimizer via ``strategy``, fine-tunes with
+    :class:`reddit.modeling.trainer.WeightedLossTrainer` (class-weighted
+    cross-entropy, balanced by ``sklearn.utils.class_weight``) under
+    early stopping, evaluates, tests, and saves the checkpoint. A failure on
+    one seed is caught and logged; remaining seeds still run.
+
+    Args:
+        ctx: Everything the run needs that does not vary per seed.
+        strategy: The kind-specific behaviour (LLM PEFT vs. BERT full
+            fine-tuning) — see :class:`reddit.training.llms.LlmSeedStrategy`
+            and :class:`reddit.training.bert.BertSeedStrategy`.
+
+    Returns:
+        ``{seed: SeedResult}`` for every seed that completed training,
+        keyed for :func:`reddit.training.selection.select_median`. Seeds
+        that raised are simply absent from the mapping.
+
+    Notes:
+        Appends one JSONL record per seed to both a train/validation
+        metrics dump and a test metrics dump under
+        ``output_dir/{family}_{date}/`` (I/O), and frees GPU memory
+        (``torch.cuda.empty_cache``/``gc.collect``) after every seed,
+        success or failure.
+    """
     config = ctx.config
     models_dir = config.paths.models_dir
     output_dir = config.paths.output_dir / f"{ctx.models.family}_{config.system.date}"

@@ -22,7 +22,16 @@ BERT_MAX_LENGTH = 512
 
 
 def llm_model_args() -> dict[str, Any]:
-    """4-bit + flash-attention load arguments for decoder LLM classifiers."""
+    """4-bit + flash-attention load arguments for decoder LLM classifiers.
+
+    Returns:
+        Keyword arguments for ``AutoModelForSequenceClassification.from_pretrained``:
+        bfloat16 compute dtype, :data:`reddit.modeling.peft.quantization_config`
+        (4-bit NF4), flash-attention 2, and ``device_map="auto"`` (accelerate
+        dispatch — required for both training, see
+        :meth:`reddit.training.llms.LlmSeedStrategy.build_model`, and
+        inference, see :func:`reddit.inference.llms.label_corpus`).
+    """
     return {
         "dtype": torch.bfloat16,
         "quantization_config": quantization_config,
@@ -33,5 +42,11 @@ def llm_model_args() -> dict[str, Any]:
 
 
 def bert_model_args() -> dict[str, Any]:
-    """Load arguments for fully fine-tuned BERT-family encoders."""
+    """Load arguments for fully fine-tuned BERT-family encoders.
+
+    Returns:
+        Keyword arguments for ``AutoModelForSequenceClassification.from_pretrained``:
+        bfloat16 compute dtype only (no quantization, no PEFT — the encoder
+        path is fully fine-tuned).
+    """
     return {"dtype": torch.bfloat16}

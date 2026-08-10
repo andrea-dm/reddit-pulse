@@ -154,7 +154,26 @@ class TestMetricsModule:
             """Softmax is shift-invariant per row, and so is the argmax.
 
             The drawn logits are integers, so the decision has a margin of at
-            least 1.0 and cannot flip on float32 rounding.
+            least 1.0 and cannot flip on float32 rounding, which is why every
+            *decision-based* metric (``accuracy``, ``f1_*``, ``recall_macro``,
+            ``precision_macro``) is checked here.
+
+            ``roc_auc`` is deliberately excluded. It ranks the continuous
+            softmax probabilities rather than the hard decision, and
+            ``roc_auc_score`` gives an exact tie 0.5 credit. Two rows can be an
+            *exact* float32 tie before the shift (identical bit pattern) and a
+            near-tie after it (sub-ULP apart, e.g. ~1e-9) — mathematically the
+            same probability, but no longer bit-identical, so the tie-breaking
+            no longer applies. With as few as 4-12 samples each pairwise
+            comparison is a large fraction of the AUC "quantum", so losing one
+            tie can move the macro AUC by several hundredths — a real property
+            of AUC as a rank statistic, not a bug in ``compute_metrics``.
+            Confirmed by direct reproduction: shifting
+            ``rows=[[1, 4, 8], [0, 1, 2], [0, 1, 2], [0, 1, 2], [-7, -4, 0]]``
+            by ``shift=4.288525994994776`` changes the softmax output by at
+            most ``4.7e-10`` yet moves ``roc_auc`` from ``0.3611`` to
+            ``0.3333`` by breaking an exact tie between rows 0 and 4 in the
+            class-0 score column.
             """
             logits = np.array(rows, dtype=np.float32)
             labels = np.array([i % 3 for i in range(len(logits))])
@@ -163,7 +182,7 @@ class TestMetricsModule:
             straight = compute_metrics((logits, labels))
             translated = compute_metrics((shifted, labels))
 
-            for name in METRIC_KEYS:
+            for name in METRIC_KEYS - {"roc_auc"}:
                 assert (isnan(straight[name]) and isnan(translated[name])) or straight[name] == pytest.approx(
                     translated[name], abs=1e-6
                 ), name

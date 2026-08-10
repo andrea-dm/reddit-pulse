@@ -26,6 +26,12 @@ def fmt_td(nanoseconds: int) -> str:
     unspecified.  Durations are decomposed arithmetically: reinterpreting the
     delta as an absolute timestamp silently wrapped every run longer than
     24 hours.
+
+    Args:
+        nanoseconds: Non-negative duration in nanoseconds.
+
+    Returns:
+        A string of the form ``"H hour(s), M minute(s) and S.ffffff seconds"``.
     """
     microseconds, _ = divmod(int(nanoseconds), 1_000)
     seconds, microsecond = divmod(microseconds, 1_000_000)
@@ -35,12 +41,26 @@ def fmt_td(nanoseconds: int) -> str:
 
 
 def now() -> str:
-    """UTC ISO-8601 instant, microsecond precision."""
+    """UTC ISO-8601 instant, microsecond precision.
+
+    Returns:
+        The current UTC instant as ``datetime.isoformat(timespec="microseconds")``.
+    """
     return datetime.datetime.now(tz=datetime.UTC).isoformat(timespec="microseconds")
 
 
 def dump_object(d: dict[str, object]) -> bytes:
-    """Serialize a dict to one UTF-8 JSON line (a JSONL record) using orjson."""
+    """Serialize a dict to one UTF-8 JSON line (a JSONL record) using orjson.
+
+    Args:
+        d: The record to serialize.
+
+    Returns:
+        The JSON-encoded record as UTF-8 bytes, terminated with ``b"\\n"``.
+
+    Raises:
+        TypeError: ``d`` contains a value ``orjson`` cannot encode.
+    """
     try:
         return orjson.dumps(d) + b"\n"
     except orjson.JSONEncodeError as e:
@@ -48,7 +68,18 @@ def dump_object(d: dict[str, object]) -> bytes:
 
 
 def archive_model(model_path: str | Path, archive_name: str) -> None:
-    """Zip a saved model directory then remove the directory."""
+    """Zip a saved model directory then remove the directory.
+
+    Args:
+        model_path: Directory to archive and then delete.
+        archive_name: Destination archive path, without the ``.zip``
+            extension (``shutil.make_archive`` appends it).
+
+    Notes:
+        Writes ``{archive_name}.zip`` and deletes ``model_path`` (I/O).
+        Both steps log a warning and continue on failure rather than
+        raising, so a zip/cleanup error cannot abort the caller.
+    """
     try:
         make_archive(archive_name, "zip", model_path)
     except Exception as e:
@@ -72,6 +103,11 @@ def clear_hf_cache(model_id: str, extra_cache_dirs: list[Path] | None = None) ->
     Args:
         model_id: The hub identifier, e.g. ``Qwen/Qwen2.5-0.5B``.
         extra_cache_dirs: Additional HF_HOME-style roots to sweep explicitly.
+
+    Notes:
+        This call is destructive: it permanently deletes the model's cached
+        weights from every swept cache root (I/O), logging progress at each
+        step.
     """
     model_dir_name = f"models--{model_id.replace('/', '--')}"
     paths_to_check = {

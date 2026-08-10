@@ -1,8 +1,10 @@
 [project]
 name = "reddit"
 version = "1.0.0"
-description = "Reddit sentiment labelling: PEFT fine-tuning of LLM/BERT classifiers and full-corpus inference over r/economy, r/Economics and r/wallstreetbets."
+description = "Reddit inflation-direction labelling: PEFT fine-tuning of LLM/BERT directional (UP/DOWN/NEUTRAL) classifiers and full-corpus inference over r/economy, r/Economics and r/wallstreetbets."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
 requires-python = ">=3.12"
 dependencies = [
     "accelerate",
@@ -38,6 +40,11 @@ dev = ["pytest", "hypothesis", "ruff", "pyright", "tach", "deptry", "pandas-stub
 # project so every sub-suite (including the torch-dependent ones) is collected.
 lint = ["ruff", "pyright", "tach", "deptry", "pandas-stubs"]
 test = ["pytest", "hypothesis", "pydantic>=2", "python-dotenv", "pyyaml", "pandas<3"]
+# `mkdocstrings` resolves `src/reddit/**` via static analysis (griffe), not by
+# importing it, so the docs group deliberately excludes the heavy runtime
+# dependency set (torch, transformers, ...): `uv sync --only-group docs
+# --no-install-project` builds the site without a GPU-oriented install.
+docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]", "pymdown-extensions"]
 
 [build-system]
 requires = ["hatchling"]

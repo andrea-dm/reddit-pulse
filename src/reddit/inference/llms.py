@@ -1,7 +1,12 @@
-"""Corpus labelling with fine-tuned LLM classifiers (4-bit, flash-attention).
+"""Corpus labelling with fine-tuned decoder SLM classifiers (4-bit, flash-attention).
 
-Replaces ``legacy/scripts/predict_llms.py`` and the inference half of
-``legacy/scripts/run_llms_serial.py``.
+Runs the QDoRA+/xQDoRA+-fine-tuned small decoder LLMs (Gemma-2, Llama-3,
+Qwen2.5; "SLM" in the paper, to distinguish them from the unfine-tuned
+LLaMA-70B zero-shot baseline the paper also reports) over the corpus, using
+the shared batching/crash-safety machinery in :mod:`reddit.inference.corpus`.
+
+Notes:
+    The LLaMA-70B zero-shot baseline is not implemented in this package.
 """
 
 # transformers/peft models and tokenizers are untyped; Unknowns stay in this
@@ -36,7 +41,24 @@ from reddit.modeling.loading import LLM_MAX_LENGTH, llm_model_args
 
 
 def build_jobs(config: Config, family: str, model_name: str, finetuning_method: str) -> list[CorpusJob]:
-    """The submissions/comments labelling passes for an LLM checkpoint."""
+    """The submissions/comments labelling passes for an LLM checkpoint.
+
+    Args:
+        config: Project configuration (``inference.submissions``/``.comments``
+            gate which jobs are built; ``inference.batch_size`` sizes them).
+        family: Model family name; written into each job as
+            ``CorpusJob.family_suffix`` so results land in a per-family
+            answers-file copy.
+        model_name: Short model name (e.g. ``"gemma2_9b"``), used to derive
+            output/label column names.
+        finetuning_method: ``"qdora"`` or ``"xqdora"``, appended to output
+            column names and used as the run label.
+
+    Returns:
+        Zero, one, or two :class:`reddit.inference.corpus.CorpusJob`
+        instances (submissions and/or comments), per the ``inference``
+        config toggles.
+    """
     label_col = f"{model_name}_{finetuning_method}_label"
     trend_col = f"{model_name}_{finetuning_method}_trend"
     desc = f"Predicting with {model_name} via {finetuning_method}"
@@ -73,9 +95,8 @@ def build_jobs(config: Config, family: str, model_name: str, finetuning_method: 
                 label_col=label_col,
                 trend_col=trend_col,
                 text_col="body_com",
-                # Legacy provenance: `predict_llms.py` joined comments on these
-                # three keys. The BERT pipeline uses a four-key set; the
-                # divergence is deliberate and preserved.
+                # Comments join on these three keys. The BERT pipeline uses a
+                # four-key set; the divergence is deliberate and preserved.
                 cols=("created_utc_com", "id_sub", "id_com"),
                 batch_size=config.inference.batch_size,
                 max_length=LLM_MAX_LENGTH,
@@ -97,7 +118,28 @@ def label_corpus(
     finetuning_method: str,
     log: LogFn,
 ) -> None:
-    """Label submissions and comments with a trained LLM checkpoint."""
+    """Label submissions and comments with a trained LLM checkpoint.
+
+    Implements :class:`reddit.core.protocols.Labeller` for the decoder-LLM
+    path: reloads the checkpoint (config + weights) at ``model_path`` and
+    runs :func:`reddit.inference.corpus.predict_corpus` for each job built
+    by :func:`build_jobs`.
+
+    Args:
+        config: Project configuration.
+        family: Model family name (see :func:`build_jobs`).
+        model_name: Short model name.
+        model_path: Filesystem path to the selected (median-seed) checkpoint.
+        model_conf: The ``AutoConfig`` matching ``model_path``.
+        tokenizer: Tokenizer matching ``model_path``.
+        finetuning_method: ``"qdora"`` or ``"xqdora"``.
+        log: Human-oriented progress logger.
+
+    Notes:
+        Loads the checkpoint onto the GPU (accelerate ``device_map="auto"``
+        dispatch) and reads/writes the corpus and answers files transitively
+        via :func:`reddit.inference.corpus.predict_corpus`.
+    """
     logging.info("Labelling...")
     t1_task = monotonic_ns()
 
@@ -117,6 +159,12 @@ def label_corpus(
 def _predict_one(
     config: Config, models: Models, model_name: str, finetuning_method: str, model_path: str, log: LogFn
 ) -> None:
+    """Load one checkpoint, label the corpus with it, then clean up caches.
+
+    Builds the tokenizer/config from ``model_path``, delegates to
+    :func:`label_corpus`, and finally removes the per-run cache directory
+    and this model's Hugging Face Hub cache regardless of outcome.
+    """
     run_name = f"{model_name}_{finetuning_method}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     log(f"Running `{run_name}`...", level="info")
 
@@ -180,6 +228,13 @@ def predict_from_archives(config: Config, models: Models, directory: str | Path)
     """Label the corpus with every ``{model}_{method}_{seed}.zip`` archive found.
 
     Only archives whose model name appears in the selected family are used.
+
+    Args:
+        config: Project configuration.
+        models: The resolved family selection (``models.finetuning_methods``
+            filters which archives are considered).
+        directory: Directory to scan for checkpoint archives (see
+            :func:`reddit.inference.discovery.iter_model_archives`).
 
     Returns:
         The number of checkpoints that were labelled.

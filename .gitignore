@@ -36,6 +36,13 @@ __pycache__/
 /data/
 /notebooks/
 /backup/
+/work_in_progress/
+
+# MkDocs build output
+/site/
+
+# Secrets / local env
+.envrc
 
 # Secrets / local env
 .envrc

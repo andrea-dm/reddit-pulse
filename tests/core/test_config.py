@@ -377,7 +377,7 @@ class TestConfigModule:
             assert len(date) == 8
             assert date.isdigit()
 
-        def test_training_arguments_defaults_reproduce_the_legacy_constants(self) -> None:
+        def test_training_arguments_defaults_match_the_previously_hardcoded_values(self) -> None:
             arguments = ArgumentsConfig()
 
             assert arguments.metric_for_best_model == "f1_weighted"

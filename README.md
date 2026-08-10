@@ -1,15 +1,26 @@
 # reddit
 
-Reddit sentiment labelling for inflation-trend research: fine-tunes decoder
-LLMs (QDoRA / xQDoRA on 4-bit bases) and BERT-family encoders as sequence
-classifiers over a hand-labelled gold dataset (`data/labelled.xlsx`), selects
-the median-performing seed per model, and labels the full corpus of
-submissions and comments from r/economy, r/Economics and r/wallstreetbets.
+Fine-tunes decoder LLMs (QDoRA+/xQDoRA+ PEFT on 4-bit bases) and BERT-family
+encoders as three-way **directional inflation-expectation classifiers**
+(UP/DOWN/NEUTRAL — not generic sentiment) over a hand-labelled gold dataset
+(`data/labelled.xlsx`), selects the median-performing seed per model, and
+labels the full corpus of submissions and comments from r/economy,
+r/Economics and r/wallstreetbets.
+
+This is the fine-tuning and full-corpus-inference stage of the pipeline
+described in Del Monaco, Longo, Marcucci & Tafani, ["Reddit's 'pulse' on US
+inflation: forecasting with large language models"](https://www.bancaditalia.it/pubblicazioni/qef/)
+(Banca d'Italia Questioni di Economia e Finanza, No. 1028, June 2026). It
+does **not** implement the paper's corpus-filtering, seed-label-construction
+or signal-aggregation stages — see the [full documentation](docs/index.md)
+for the exact stage-by-stage scope boundary before relying on this
+repository as a full replication package.
 
 ## Layout
 
 ```
 config.yml            # unified configuration (paths, training, families)
+mkdocs.yml, docs/      # documentation site (build/serve instructions below)
 src/reddit/
   cli.py              # `reddit` entry point (run / train / predict)
   core/               # config schema, logging, env bootstrap, shared utils
@@ -21,7 +32,6 @@ src/reddit/
 data/                 # subreddit CSVs + labelled.xlsx gold set
 models/               # trained checkpoints ({model}_{method}_{seed}[.zip])
 outputs/ results/ labelled/ logs/   # run artefacts
-legacy/               # pre-refactor scripts, flat src modules and yaml configs
 ```
 
 ## Setup
@@ -59,20 +69,39 @@ reddit predict --family bert     --directory models
 `CUDA_VISIBLE_DEVICES`. The `*_part1` / `*_part2` families split a cohort
 across two GPUs — run one command per GPU.
 
-### Old launcher → CLI mapping
+## Documentation
 
-| Old | New |
-|---|---|
-| `launch_gemma.sh` | `reddit run --family gemma --gpu 0` |
-| `launch_gemma_27_gid0.sh` | `reddit run --family gemma_27 --gpu 0` |
-| `launch_llama.sh` | `reddit run --family llama --gpu 0` |
-| `launch_qwen.sh` | `reddit run --family qwen --gpu 1` |
-| `launch_llms_small_p1_gid0.sh` / `p2_gid1.sh` | `reddit run --family small_part1 --gpu 0` / `small_part2 --gpu 1` |
-| `launch_llms_med_p1_gid0.sh` / `p2_gid1.sh` | `reddit run --family medium_part1 --gpu 0` / `medium_part2 --gpu 1` |
-| `launch_llms_tests_gid0.sh` | `reddit run --family test --limit 1 --gpu 0` |
-| `launch_bert.sh` / `launch_bert_serial.sh` | `reddit run --family bert --gpu 0` |
-| `launch_predict_llms.sh` | `reddit predict --family gemma_27 --directory models --gpu 0` |
-| `launch_predict_bert.sh` | `reddit predict --family bert --directory models --gpu 0` |
+Full documentation — getting started, task-oriented how-to guides, and an
+advanced tier (implementation design, architecture decision records,
+operations) — lives under `docs/` and is not yet hosted; build and browse
+it locally:
 
-The conda `LD_PRELOAD`/`LD_LIBRARY_PATH` workaround in the old launchers is
-obsolete under the uv-managed environment.
+```bash
+uv sync --only-group docs --no-install-project
+uv run --no-sync mkdocs serve   # http://127.0.0.1:8000
+```
+
+See [`docs/index.md`](docs/index.md) to start reading without building the
+site, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full contributor
+workflow (quality gates, commit style, docs verification).
+
+## Citation
+
+If you use this code, please cite the paper it implements:
+
+```bibtex
+@techreport{delmonaco2026reddit,
+  title  = {Reddit's `pulse' on {US} inflation: forecasting with large language models},
+  author = {Del Monaco, Andrea and Longo, Luigi and Marcucci, Juri and Tafani, Irene},
+  institution = {Banca d'Italia},
+  series = {Questioni di Economia e Finanza (Occasional Papers)},
+  number = {1028},
+  year   = {2026},
+  month  = jun,
+  doi    = {10.32057/0.QEF.2026.1028},
+}
+```
+
+## License
+
+See [`LICENSE.md`](LICENSE.md).

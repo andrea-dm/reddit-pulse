@@ -22,10 +22,22 @@ from sklearn.metrics import (
 def compute_metrics(eval_pred: Any) -> dict[str, float]:
     """Compute accuracy, weighted/macro F1, macro recall/precision and ROC-AUC.
 
+    Passed to ``transformers.Trainer(compute_metrics=...)`` for every
+    fine-tuning seed. ``f1_weighted`` is the metric
+    ``config.training.arguments.metric_for_best_model`` selects on by
+    default, and is also the score
+    :func:`reddit.training.selection.select_median` ranks seeds by.
+
     Args:
         eval_pred: A ``transformers.EvalPrediction`` (or ``(predictions,
             label_ids)`` pair) — typed ``Any`` at this boundary because the
             transformers callback API is untyped.
+
+    Returns:
+        A dict with keys ``accuracy``, ``f1_weighted``, ``f1_macro``,
+        ``recall_macro``, ``precision_macro`` and ``roc_auc``. ``roc_auc``
+        is ``float("nan")`` if a class is absent from the evaluation batch
+        (macro one-vs-rest ROC-AUC is undefined in that case).
     """
     predictions, labels = eval_pred
     preds = argmax(predictions, axis=1)
@@ -39,11 +51,22 @@ def compute_metrics(eval_pred: Any) -> dict[str, float]:
         # a class may be absent from this evaluation batch
         auc = float("nan")
 
+    # ``zero_division`` has no annotation in sklearn's own signature — only the
+    # default value "warn" — so pyright infers `str` from that default and rejects
+    # a numeric override. sklearn's docs and runtime validation
+    # (``_check_zero_division``) explicitly accept 0, 1 or ``np.nan`` too; typing
+    # this as ``Any`` documents that gap in one place instead of four.
+    # ``0`` means "score an undefined metric (e.g. a class with no predicted or
+    # true samples) as 0" rather than emitting an ``UndefinedMetricWarning``.
+    zero_division: Any = 0
+
     return {
         "accuracy": float(accuracy_score(labels, preds)),
-        "f1_weighted": float(f1_score(y_true=labels, y_pred=preds, average="weighted", zero_division=0)),
-        "f1_macro": float(f1_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
-        "recall_macro": float(recall_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
-        "precision_macro": float(precision_score(y_true=labels, y_pred=preds, average="macro", zero_division=0)),
+        "f1_weighted": float(f1_score(y_true=labels, y_pred=preds, average="weighted", zero_division=zero_division)),
+        "f1_macro": float(f1_score(y_true=labels, y_pred=preds, average="macro", zero_division=zero_division)),
+        "recall_macro": float(recall_score(y_true=labels, y_pred=preds, average="macro", zero_division=zero_division)),
+        "precision_macro": float(
+            precision_score(y_true=labels, y_pred=preds, average="macro", zero_division=zero_division)
+        ),
         "roc_auc": auc,
     }
