@@ -103,8 +103,9 @@ inference:
   submissions: true
   comments: true
 
-# Model families, selected at the CLI with --family. The *_part1/_part2
-# families exist to split work across two GPUs (run one per GPU with --gpu).
+# Model families, selected at the CLI with --family (or individual models
+# with --model). To split work across GPUs, run disjoint --model subsets per
+# --gpu invocation instead of declaring a separate family.
 families:
   bert:
     kind: bert
@@ -116,8 +117,6 @@ families:
     models:
       - {name: gemma2_9b, id: google/gemma-2-9b}
       - {name: gemma2_2b, id: google/gemma-2-2b}
-  gemma_27:
-    models:
       - {name: gemma2_27b, id: google/gemma-2-27b}
   llama:
     models:
@@ -129,23 +128,6 @@ families:
       - {name: qwen2.5_7b, id: Qwen/Qwen2.5-7B}
       - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
       - {name: qwen2.5_1.5b, id: Qwen/Qwen2.5-1.5B}
-  small_part1:
-    models:
-      - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
-      - {name: gemma2_2b, id: google/gemma-2-2b}
-  small_part2:
-    models:
-      - {name: qwen2.5_1.5b, id: Qwen/Qwen2.5-1.5B}
-      - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
-  medium_part1:
-    models:
-      - {name: llama3.1_8b, id: meta-llama/Llama-3.1-8B}
-      - {name: qwen2.5_7b, id: Qwen/Qwen2.5-7B}
-  medium_part2:
-    finetuning_methods: [xqdora]
-    models:
-      # - {name: llama3.2_3b, id: meta-llama/Llama-3.2-3B}
-      - {name: gemma2_9b, id: google/gemma-2-9b}
   test:
     models:
       - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}

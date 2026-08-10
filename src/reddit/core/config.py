@@ -24,7 +24,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 from yaml import YAMLError, safe_load
 
-from reddit.core.errors import ConfigError, UnknownFamilyError
+from reddit.core.errors import ConfigError, UnknownFamilyError, UnknownModelError
 
 # Rationale: "adalora" is a declared-but-unimplemented option — selecting it
 # raises `UnsupportedMethodError` (see `reddit.training.llms.run_family`),
@@ -375,6 +375,55 @@ class Config(BaseModel):
             finetuning_methods=list(fam.finetuning_methods or self.training.finetuning_methods),
             kind=fam.kind,
         )
+
+    def resolve_families(self, names: list[str] | None = None) -> list[Models]:
+        """Resolve ``--family``/``--all-families`` into one :class:`Models` per family.
+
+        ``None`` resolves every declared family, in config declaration order.
+        """
+        selected = list(self.families) if names is None else names
+        return [self.family(name) for name in selected]
+
+    def resolve_models(self, names: list[str]) -> list[Models]:
+        """Resolve ``--model`` names into per-family :class:`Models`, filtered to those models.
+
+        Each declared family is scanned for the requested names; matches are grouped
+        into one :class:`Models` per family so multi-family selections still run
+        through the right (bert vs. llm) pipeline per group. A name declared by more
+        than one family is rejected rather than silently resolved, since families can
+        disagree on the fine-tuning methods applied to an otherwise-identical model.
+        """
+        requested = set(names)
+        owners: dict[str, list[str]] = {}
+        for family_name, fam in self.families.items():
+            for m in fam.models:
+                if m.name in requested:
+                    owners.setdefault(m.name, []).append(family_name)
+
+        if unknown := requested - owners.keys():
+            available = ", ".join(sorted({m.name for fam in self.families.values() for m in fam.models}))
+            raise UnknownModelError(f"Unknown model(s) `{', '.join(sorted(unknown))}`. Available: {available}")
+
+        if ambiguous := {name: families for name, families in owners.items() if len(families) > 1}:
+            detail = "; ".join(f"`{name}` in {', '.join(families)}" for name, families in sorted(ambiguous.items()))
+            raise UnknownModelError(
+                f"Ambiguous model(s), declared by more than one family: {detail}. Use --family instead."
+            )
+
+        resolved: list[Models] = []
+        for family_name, fam in self.families.items():
+            matched = [m for m in fam.models if m.name in requested]
+            if not matched:
+                continue
+            resolved.append(
+                Models(
+                    family=family_name,
+                    models=matched,
+                    finetuning_methods=list(fam.finetuning_methods or self.training.finetuning_methods),
+                    kind=fam.kind,
+                )
+            )
+        return resolved
 
 
 def _resolve_relative_paths(raw: dict[str, Any], base: Path) -> dict[str, Any]:
