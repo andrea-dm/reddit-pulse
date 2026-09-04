@@ -8,7 +8,11 @@ worker-pool concurrency: the pipelines do not spawn subprocesses (the only
 child processes are the `DataLoader` workers `transformers.Trainer` forks,
 which never touch CUDA). Parallelism across GPUs is achieved externally,
 by launching one `reddit` process per GPU against a disjoint `--model`
-subset (see `config.yml`).
+subset (see `config.yml`). Those processes meet only at the consolidated
+answers file, whose read-merge-write is serialised through a lock
+directory (`<answers>.lock/`, see `reddit.inference.corpus.update_answers`)
+so that two models of the same family cannot overwrite each other's
+columns; everything else they write is per-model.
 
 ## Multi-seed training lifecycle
 

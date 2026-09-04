@@ -638,6 +638,7 @@ class TestConfigModule:
 
             assert config.training.seeds == seeds
 
+        @settings(deadline=None)  # building a full Config per example trips the 200 ms deadline on a loaded box
         @given(name=st.text(min_size=1, max_size=12).filter(lambda s: s not in {"llm", "bert"}))
         def test_every_unknown_family_name_raises_a_config_error(self, name: str) -> None:
             config = Config(

@@ -40,6 +40,11 @@ implementation and the half-precision dtype against the visible GPU
 | Turing/Volta (`sm_75`/`sm_70`, e.g. Tesla T4/V100) | `float16` | `sdpa` |
 | no CUDA device | `float32` | `sdpa` |
 
+Gemma-2 was trained in bfloat16 and is known to overflow to NaN in float16,
+so on a Turing box the `gemma` family is suitable for smoke tests only; the
+A100 production target resolves to bfloat16 and is unaffected. Qwen2.5 and
+Llama-3 train fine in float16.
+
 `flash-attn` therefore only matters on Ampere-or-newer GPUs — its kernels
 do not run on Turing at all, so on a T4 the package is neither needed nor
 usable. It needs a CUDA toolchain at *build* time, so it is not a plain

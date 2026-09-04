@@ -74,6 +74,11 @@ class DeviceProfile:
 
         ``bfloat16`` where it is native, ``float16`` on older GPUs, and
         ``float32`` without CUDA.
+
+        Gemma-2 was trained in bfloat16 and is known to overflow to NaN in
+        float16, so on a Turing box (the T4 dev machine) the Gemma families
+        are good for smoke tests only; the A100 target resolves to bfloat16
+        and is unaffected. Qwen2.5 and Llama-3 train fine in float16.
         """
         if not self.cuda:
             return torch.float32

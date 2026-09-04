@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
+import os
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,6 +25,7 @@ from pandas import DataFrame, read_csv
 
 from reddit.core.config import Config, LabelsConfig
 from reddit.core.errors import CorpusUnavailableError
+from reddit.inference import corpus
 from reddit.inference.corpus import SUBREDDITS, CorpusJob, predict_corpus, process_batch, update_answers
 
 from ..conftest import RecordingLog
@@ -147,7 +152,7 @@ class TestCorpusModule:
                 job=submissions_job,
             )
 
-            assert results == [{"tiny_label": "unknown", "tiny_trend": "unknown"}]
+            assert results == [{"tiny_label": "unknown", "tiny_trend": None}]
 
         def test_an_empty_batch_produces_no_results(
             self, fake_tokenizer: FakeTokenizer, labels_config: LabelsConfig, submissions_job: CorpusJob
@@ -296,6 +301,124 @@ class TestCorpusModule:
             with pytest.raises(CorpusUnavailableError):
                 update_answers(absent, frame, job)
 
+        # ─────────────────────────────────────────────── answers lock ──
+
+        def test_the_lock_directory_is_released_after_a_successful_update(
+            self, write_answers: Callable[..., Path], submissions_job: CorpusJob
+        ) -> None:
+            answers = write_answers()
+
+            update_answers(answers, labelled_frame(), submissions_job)
+
+            assert not answers.with_name(answers.name + ".lock").exists()
+
+        def test_a_held_lock_delays_the_update_until_it_is_released(
+            self, write_answers: Callable[..., Path], submissions_job: CorpusJob, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_POLL", 0.02)
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_TIMEOUT", 5.0)
+            answers = write_answers()
+            lock = answers.with_name(answers.name + ".lock")
+            lock.mkdir()
+            released_at: list[float] = []
+
+            def release() -> None:
+                time.sleep(0.3)
+                released_at.append(time.monotonic())
+                lock.rmdir()
+
+            holder = threading.Thread(target=release)
+            holder.start()
+            update_answers(answers, labelled_frame(), submissions_job)
+            finished_at = time.monotonic()
+            holder.join()
+
+            assert finished_at >= released_at[0]
+            assert "tiny_label" in read_csv(answers).columns
+
+        def test_a_stale_lock_is_broken(
+            self,
+            write_answers: Callable[..., Path],
+            submissions_job: CorpusJob,
+            monkeypatch: pytest.MonkeyPatch,
+            caplog: pytest.LogCaptureFixture,
+        ) -> None:
+            """A lock older than the timeout belongs to a process that died holding it."""
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_TIMEOUT", 1.0)
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_POLL", 0.02)
+            answers = write_answers()
+            lock = answers.with_name(answers.name + ".lock")
+            lock.mkdir()
+            an_hour_ago = time.time() - 3600
+            os.utime(lock, (an_hour_ago, an_hour_ago))
+
+            with caplog.at_level(logging.WARNING):
+                update_answers(answers, labelled_frame(), submissions_job)
+
+            assert "Breaking stale answers lock" in caplog.text
+            assert not lock.exists()
+            assert "tiny_label" in read_csv(answers).columns
+
+        def test_a_live_lock_times_out_without_touching_the_answers_file(
+            self, write_answers: Callable[..., Path], submissions_job: CorpusJob, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_TIMEOUT", 0.2)
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_POLL", 0.02)
+            answers = write_answers()
+            before = answers.read_bytes()
+            lock = answers.with_name(answers.name + ".lock")
+            lock.mkdir()
+            # A holder that keeps touching its lock is alive: pin the mtime in
+            # the future so the stale check can never fire during the test.
+            far_future = time.time() + 3600
+            os.utime(lock, (far_future, far_future))
+
+            with pytest.raises(TimeoutError, match="answers-file lock"):
+                update_answers(answers, labelled_frame(), submissions_job)
+
+            assert lock.is_dir()
+            assert answers.read_bytes() == before
+
+        def test_concurrent_updates_never_lose_each_others_columns(
+            self, write_answers: Callable[..., Path], submissions_job: CorpusJob, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            """Two GPU processes on the same family read, merge into and rewrite one file."""
+            monkeypatch.setattr(corpus, "ANSWERS_LOCK_POLL", 0.02)
+            real_read_csv = corpus.read_csv
+
+            def slow_read_csv(*args: Any, **kwargs: Any) -> Any:
+                frame = real_read_csv(*args, **kwargs)
+                time.sleep(0.2)  # widen the read-to-write window the lock must cover
+                return frame
+
+            monkeypatch.setattr(corpus, "read_csv", slow_read_csv)
+            answers = write_answers()
+            first = submissions_job
+            second = dataclasses.replace(submissions_job, label_col="other_label", trend_col="other_trend")
+            barrier = threading.Barrier(2)
+            errors: list[Exception] = []
+
+            def run(job: CorpusJob, frame: DataFrame) -> None:
+                barrier.wait()
+                try:
+                    update_answers(answers, frame, job)
+                except Exception as e:  # noqa: BLE001 — a thread must report, not raise
+                    errors.append(e)
+
+            threads = [
+                threading.Thread(target=run, args=(first, labelled_frame())),
+                threading.Thread(
+                    target=run, args=(second, labelled_frame(label_col="other_label", trend_col="other_trend"))
+                ),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            assert errors == []
+            assert {"tiny_label", "other_label"} <= set(read_csv(answers).columns)
+
         # ─────────────────────────────────────────────── predict_corpus ──
 
         def test_every_subreddit_is_labelled_and_persisted(
@@ -334,9 +457,48 @@ class TestCorpusModule:
 
             predict_corpus(FakeModel(), fake_tokenizer, bootstrapped_config, submissions_job, log=recording_log)
 
+            labelled = read_csv(bootstrapped_config.paths.labels_dir / submissions_job.output_filename)
+            assert len(labelled) == 2 * len(SUBREDDITS)
+            assert "stale" not in labelled.columns
+
+        def test_the_dump_is_deleted_once_the_labelled_csv_is_saved(
+            self,
+            bootstrapped_config: Config,
+            write_corpus: Callable[..., Any],
+            write_answers: Callable[..., Path],
+            submissions_job: CorpusJob,
+            fake_tokenizer: FakeTokenizer,
+            recording_log: RecordingLog,
+        ) -> None:
+            """One full-corpus JSONL per model and method adds up on a shared mount."""
+            write_corpus(rows=2)
+            write_answers(rows=2)
+
+            predict_corpus(FakeModel(), fake_tokenizer, bootstrapped_config, submissions_job, log=recording_log)
+
+            assert (bootstrapped_config.paths.labels_dir / submissions_job.output_filename).is_file()
+            assert not submissions_job.dump_file.exists()
+
+        def test_the_dump_survives_a_failed_labelled_csv_write(
+            self,
+            bootstrapped_config: Config,
+            write_corpus: Callable[..., Any],
+            write_answers: Callable[..., Path],
+            submissions_job: CorpusJob,
+            fake_tokenizer: FakeTokenizer,
+            recording_log: RecordingLog,
+        ) -> None:
+            """The dump is the crash-safety copy until the labelled CSV exists."""
+            write_corpus(rows=2)
+            write_answers(rows=2)
+            # `to_csv` onto a directory fails, leaving the dump as the only copy.
+            (bootstrapped_config.paths.labels_dir / submissions_job.output_filename).mkdir()
+
+            predict_corpus(FakeModel(), fake_tokenizer, bootstrapped_config, submissions_job, log=recording_log)
+
+            assert "Could not save the labelled output" in recording_log.text_at("error")
             records = [json.loads(line) for line in submissions_job.dump_file.read_text(encoding="utf-8").splitlines()]
             assert len(records) == 2 * len(SUBREDDITS)
-            assert all("stale" not in record for record in records)
 
         def test_rows_without_text_are_skipped(
             self,
