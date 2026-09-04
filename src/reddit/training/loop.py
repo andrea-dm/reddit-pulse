@@ -429,7 +429,7 @@ def run_seeds(ctx: SeedContext, strategy: SeedStrategy) -> dict[int, SeedResult]
             ctx.log(message, level="critical")
             logging.critical(message)
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-seed resilience: multi-day runs must outlive one bad seed
             _report_failure(ctx, e)
         finally:
             # Collect first so the seed's tensors are actually unreachable

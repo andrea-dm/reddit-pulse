@@ -62,38 +62,224 @@ build-backend = "hatchling.build"
 flash-attn = ["torch", "nvidia-cuda-nvcc"]
 
 # ═══════════════════════════════════════════════════════════ LINTING & FORMATTING ═══ #
+# Mirrors the `carbon_pledges` sibling project's gate (same rule families,
+# thresholds and rationale), minus the carve-outs that only exist for that
+# project's Vespa/vLLM stack, plus this project's own documented house styles.
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-include = ["src/**/*.py", "tests/**/*.py"]
+# Paths named on the CLI are still filtered through `include`, so a directory
+# absent here is silently skipped even when passed explicitly.
+include = ["src/**/*.py", "tests/**/*.py", ".github/utils/**/*.py"]
 extend-exclude = ["data", "legacy", "notebooks", "outputs", "results"]
 
 [tool.ruff.lint]
+# Preview mode is on ONLY to reach the three preview complexity rules selected
+# below (PLR0914 / PLR0916 / PLR1702). They measure the local-state, boolean
+# and *nesting* dimensions of complexity — the dimensions SonarSource's
+# cognitive-complexity metric adds on top of cyclomatic, and which no stable
+# ruff rule measures. `explicit-preview-rules` keeps every other preview rule
+# off: a family selection like `PL`, `RUF` or `FURB` enables only its stable
+# members, so a ruff upgrade cannot silently widen the gate. (Preview mode does
+# still activate preview *behaviour* and preview *fixes* for already-stable
+# rules — that is the one accepted side effect of this switch.)
+preview = true
+explicit-preview-rules = true
+
 extend-select = [
-    "A", # flake8-builtins
+    # ── Complexity gate ────────────────────────────────────────────────────
+    # Ruff has no port of SonarSource S3776 (cognitive complexity). These six
+    # approximate it by scoring each dimension S3776 aggregates; thresholds
+    # are in [tool.ruff.lint.mccabe] and [tool.ruff.lint.pylint] below.
+    "C90", # mccabe cyclomatic complexity (C901) — Sonar S1541
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0914", # too many local variables [preview]
+    "PLR0915", # too many statements — Sonar S138
+    "PLR0916", # too many boolean expressions [preview] — Sonar S1067
+    "PLR1702", # too many nested blocks [preview] — Sonar S134
+
+    # ── Families already enforced ──────────────────────────────────────────
+    "A", # flake8-builtins — Sonar S5806 (builtin shadowing)
     "B", # flake8-bugbear
     "C4", # flake8-comprehensions
+    "FA", # flake8-future-annotations
     "I", # flake8-import-order
     "PIE", # flake8-pie
+    "PYI", # flake8-pyi
+    "PT", # flake8-pytest-style
+    "Q", # flake8-quotes
     "RET", # flake8-return
-    "SIM", # flake8-simplify
+    "SIM", # flake8-simplify — Sonar S1721/S1862 (duplicated branches/conditions)
+    "TD", # flake8-todos
     "E", # pycodestyle
-    "F", # pyflakes
+    "F", # pyflakes — Sonar S1128/S1481 (unused imports and locals)
+    "D1", # pydocstyle — undocumented public modules, classes, functions, methods
+    "PL", # pylint
     "RUF", # ruff-specific rules
+
+    # ── SonarLint parity ───────────────────────────────────────────────────
+    # Families widened to cover the Sonar rules ruff can actually decide
+    # statically. Deliberate house-style violations these drag in are carved
+    # back out in `ignore` / `per-file-ignores` rather than left unselected,
+    # so the exemption is visible instead of implicit.
+    "ARG", # unused arguments — Sonar S1172
+    "ASYNC", # blocking calls in async scope
+    "DTZ", # naive datetimes
+    "ERA", # commented-out code — Sonar S125
+    "FURB", # refurb — Sonar's "code smell" modernisation family
+    "G", # logging-format misuse — Sonar S2629
+    "ISC", # implicit string concatenation
+    "LOG", # logging API misuse
+    "N", # pep8-naming — Sonar S101 (class), S1542 (function), S117 (local)
+    "PERF", # perflint — Sonar performance smells
+    "PGH", # blanket `# noqa` / `# type: ignore` — suppression hygiene
+    "RSE", # raise-statement hygiene
+    "S", # flake8-bandit — Sonar security hotspots
+    "SLF", # private-member access — Sonar S3011
+    "T20", # stray print()/pprint() in library code
+    "TC", # flake8-type-checking — TYPE_CHECKING blocks for type-only imports
+    "TRY", # tryceratops — Sonar exception rules
+    "UP", # pyupgrade
+
+    # ── Individually-selected singletons ───────────────────────────────────
+    # Kept rule-by-rule because their families carry rules this codebase
+    # deliberately violates.
+    "BLE001", # blind `except Exception` — must carry a written justification
+
+    # ── Re-pinned by exact code ────────────────────────────────────────────
+    # Every rule below is already inside a family selected above, so these
+    # entries look redundant. They are not, and MUST NOT be collapsed into the
+    # family: `explicit-preview-rules = true` means a family selector enables
+    # only that family's STABLE members. Any of these that is (or later
+    # becomes) a preview rule would be silently switched off by a bare family
+    # selection. Naming the code keeps it enabled either way.
+    "DTZ007", # naive `strptime()` without %z
+    "G201", # `.error(..., exc_info=True)` → `.exception(...)`
+    "ISC004", # unparenthesized implicit string concat in a collection
+    "S110", # `try`-`except`-`pass`
+    "S112", # `try`-`except`-`continue`
+    "TRY004", # prefer `TypeError` for invalid type
+    "TRY401", # redundant exception object in `logging.exception`
+    "UP040", # `TypeAlias` annotation → `type` keyword
 ]
 
 ignore = [
+    "RUF100", # Unused `noqa` directive — tolerated: a directive can be load-
+    #           bearing under a different ruff version or a narrower CLI run.
+    # TC006 quotes the type expression in every `typing.cast()`. Its auto-fix
+    # is in direct conflict with Sonar S1192: quoting turns repeated cast
+    # types back into duplicated string literals. The runtime cost of
+    # evaluating an unquoted alias in cast() is negligible, so S1192 wins.
+    "TC006", # runtime-cast-value — conflicts with Sonar S1192 (see above)
+    # RUF102 (invalid rule code in `# noqa`) is deliberately NOT ignored: an
+    # unparseable rule code is always a typo, never intentional.
+    "ERA001", # commented-out code — `# - {name: ...}` style model lists and
+    #           disabled seeds are configuration history, not dead code
     "EXE002", # files on the AML CIFS mount are always mode 777; no shebang intended
+
+    # ── Carve-outs from the families widened above ─────────────────────────
+    # Each of these is a documented house style. They were previously avoided
+    # by simply not selecting the family; now the family is on and the
+    # exemption is explicit.
+    "TRY003", # long message outside the exception class — the
+    #           `raise ValueError("literal")` style is used throughout
+    "TRY400", # `logging.error` inside `except` — TRY401/G201 already govern
+    #           the cases that matter; `.error(exc_info=True)` pairs with a
+    #           separate user-facing print_log line by design
+    "ISC001", # single-line implicit concat — conflicts with `ruff format`
+    "N802", # function name should be lowercase — conflicts with `pytest.mark.parametrize`
+    "N806", # non-lowercase variable in function
+    "N812", # lowercase imported as non-lowercase
+    "T201", # stray `print()` in a test — tests are allowed to print
+
+    # ── This project's own house styles ────────────────────────────────────
     "LOG015", # root-logger calls are the project's established logging style
     "DTZ005", # naive local datetimes are intentional (run names, Rome-time stamps)
     "DTZ006",
-    "BLE001", # blanket except keeps multi-day multi-seed runs alive on any failure
-    "G201", # .error(exc_info=True) pairs with a separate user-facing print_log line
+]
+
+[tool.ruff.lint.mccabe]
+# SonarSource's own cyclomatic gate (S1541) also defaults to 10. The dimensions
+# cognitive complexity adds on top are bounded by the pylint block below.
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 7
+max-bool-expr = 5 # PLR0916 — Sonar S1067
+max-branches = 12 # PLR0912
+max-locals = 15 # PLR0914
+max-nested-blocks = 4 # PLR1702 — Sonar S134 caps nesting at 3
+max-returns = 6 # PLR0911
+max-statements = 50 # PLR0915 — Sonar S138
+
+[tool.ruff.lint.flake8-type-checking]
+# Annotations on these are resolved at RUNTIME, so hoisting their imports into
+# a `TYPE_CHECKING` block would break model construction rather than speed up
+# import: Pydantic rebuilds field types on class creation.
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "typing.TypedDict", "typing_extensions.TypedDict"]
+runtime-evaluated-decorators = [
+    "pydantic.validate_call",
+    "pydantic.dataclasses.dataclass",
+    # Stdlib `dataclasses.dataclass` is deliberately NOT listed: under
+    # `from __future__ import annotations` plain-dataclass field annotations
+    # are never evaluated at runtime.
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["PLR2004"]
+"tests/**" = [
+    "ARG", # unused pytest fixtures arrive as dead parameters
+    "D1",
+    "ERA001", # commented-out fixtures and expected payloads are deliberate here
+    "PLR0913",
+    "PLR0914",
+    "PLR0917",
+    "PLR2004",
+    "S101", # `assert` IS the test API
+    "S105", # dummy credentials in fixtures
+    "S106",
+    "S107",
+    "S108", # /tmp paths in fixtures
+    "S311", # non-cryptographic randomness in fixtures
+    "SLF001", # whitebox tests reach into internals by design — pyright's
+    #           reportPrivateUsage is already off for this tree
+    "T20",
+    "TC", # a test-only import gains nothing from a TYPE_CHECKING block
+]
+# Script-style tree: console tools where printing is the output channel, that
+# shell out to the `gh` CLI / GitHub REST API on behalf of the user.
+".github/utils/**" = [
+    "E402",
+    "ERA001",
+    "I001",
+    "PLR0912",
+    "PLR0913",
+    "PLR0914",
+    "PLR0915",
+    "PLR0916",
+    "PLR0917",
+    "PLR1702",
+    "PLR2004",
+    "S101",
+    "S105", # `TOKEN_ENV_VAR = "GITHUB_TOKEN"` names the variable, not a secret
+    "S310", # `urlopen` against the fixed https://api.github.com base only
+    "S603", # `subprocess.run([...])` with list arguments, no shell
+    "S607", # `gh`/`git` are resolved from PATH by design
+    "SLF001",
+    "T20",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+
+# Pyright is configured in pyrightconfig.json (the single source of truth).
+# Do NOT add a [tool.pyright] block here: when pyrightconfig.json exists pyright
+# ignores the pyproject one entirely, so a block here would silently drift.
 
 # ══════════════════════════════════════════════════ DEPENDENCIES & ARCHITECTURE ═══ #
 # Module boundaries live in tach.toml (`uv run tach check`).

@@ -236,7 +236,7 @@ class TestCliModule:
         def test_the_gpu_selection_is_exported_before_the_pipeline_runs(
             self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
         ) -> None:
-            import os
+            import os  # noqa: PLC0415 — scoped to this test
 
             run_main("run", "-f", "llm_family", "--gpu", "0,1")
 

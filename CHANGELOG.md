@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Lint and type gates hardened to the `carbon_pledges` sibling project's
+  policy: ruff now runs the SonarLint-parity families (`ARG`, `DTZ`, `ERA`,
+  `FURB`, `G`, `N`, `PERF`, `PGH`, `S`, `SLF`, `T20`, `TC`, `TRY`, `UP`, ...),
+  Google-style `D1` docstring presence, the six complexity gates
+  (`C901`, `PLR0911/12/14/15/16`, `PLR1702`) and `BLE001`; pyright adds
+  `reportUnreachable`, `reportUnnecessaryComparison`,
+  `reportPropertyTypeMismatch`, `reportUninitializedInstanceVariable`,
+  `reportImplicitOverride`, `reportMissingSuperCall` and
+  `deprecateTypingAliases`. Every house-style exemption is now an explicit,
+  commented `ignore`/`per-file-ignores` entry (`pyproject.toml`,
+  `pyrightconfig.json`). The code was brought into line: logging calls use
+  `%s`-style arguments, type-only imports live in `TYPE_CHECKING` blocks,
+  overriding methods carry `@override`, `print_log` is table-driven, and
+  `.github/utils/` is linted and type-checked too.
 - `reddit.modeling.peft.quantization_config` (a module-level singleton) is
   replaced by `build_quantization_config(compute_dtype)`, so the 4-bit
   compute dtype always matches the loaded weight dtype (previously fixed

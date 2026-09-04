@@ -7,7 +7,7 @@ import logging
 import sys
 from os import getpid
 from pathlib import Path
-from typing import Literal
+from typing import Literal, override
 
 from pandas import Timestamp
 
@@ -17,6 +17,7 @@ type LogLevel = Literal["", "debug", "info", "success", "warning", "warn", "erro
 class MicrosecondFormatter(logging.Formatter):
     """Formatter that supports %f (microseconds) in datefmt."""
 
+    @override
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         """Format ``record.created`` as local time, honoring ``%f`` in ``datefmt``.
 
@@ -72,6 +73,41 @@ def setup_logging(log_level: int = logging.INFO, log_file: str | Path = "run.log
     logger.addHandler(file_handler)
 
 
+# Prefix per numeric level; the string aliases below map onto these codes.
+_PREFIXES: dict[int, str] = {
+    -1: "  ___DEBUG___  🐞  ",
+    0: "               📄  ",
+    1: "         INFO  👉  ",
+    2: "               ✅  ",
+    3: "     *WARNING  ⚠️  ",
+    4: "      **ERROR  ⛔  ",
+    5: "       FAILED  😰  ",
+    6: "  ***CRITICAL  😱  ",
+}
+_LEVEL_CODES: dict[str, int] = {
+    "": 0,
+    "debug": -1,
+    "info": 1,
+    "success": 2,
+    "warning": 3,
+    "warn": 3,
+    "error": 4,
+    "fail": 5,
+    "failure": 5,
+    "critical": 6,
+}
+
+
+def _prefix(level: LogLevel | int | str) -> str:
+    """The emoji/label prefix for ``level``; unknown levels render neutrally.
+
+    An unknown level falls back to the neutral (``level=0``) rendering rather
+    than dropping the message entirely.
+    """
+    code = _LEVEL_CODES.get(level) if isinstance(level, str) else level
+    return _PREFIXES.get(code if code is not None else 0, _PREFIXES[0])
+
+
 def print_log(
     message: str | None = None,
     *,
@@ -111,29 +147,8 @@ def print_log(
     gpu = f" |{gid}" if gid is not None else ""
     out = f"|{pid:0>8}{gpu}|{now}|"
     if message:
-        match level:
-            case -1 | "debug":
-                out += f"  ___DEBUG___  🐞  {message}"
-            case 0 | "":
-                out += f"               📄  {message}"
-            case 1 | "info":
-                out += f"         INFO  👉  {message}"
-            case 2 | "success":
-                out += f"               ✅  {message}"
-            case 3 | "warning" | "warn":
-                out += f"     *WARNING  ⚠️  {message}"
-            case 4 | "error":
-                out += f"      **ERROR  ⛔  {message}"
-            case 5 | "failure" | "fail":
-                out += f"       FAILED  😰  {message}"
-            case 6 | "critical":
-                out += f"  ***CRITICAL  😱  {message}"
-            case level if level is None:
-                out = message
-            case _other:
-                # Unknown level: fall back to the neutral rendering rather than
-                # dropping the message entirely.
-                out += f"               📄  {message}"
+        # `level=None` prints the message verbatim, without even the prefix.
+        out = message if level is None else out + _prefix(level) + message
     print(out)
     if dump and Path(filename).exists():
         with open(filename, "a", encoding="utf-8") as f:

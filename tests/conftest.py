@@ -61,7 +61,7 @@ PATH_KEYS = (
 
 
 @pytest.fixture(autouse=True)
-def _isolated_environ() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+def _isolated_environ() -> Iterator[None]:
     """Restore ``os.environ`` verbatim after every test."""
     saved = os.environ.copy()
     try:
@@ -72,7 +72,7 @@ def _isolated_environ() -> Iterator[None]:  # pyright: ignore[reportUnusedFuncti
 
 
 @pytest.fixture(autouse=True)
-def _safe_hf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+def _safe_hf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``HF_HOME`` inside ``tmp_path`` for every test.
 
     ``clear_hf_cache`` and the training/inference cleanup paths delete whole
@@ -84,7 +84,7 @@ def _safe_hf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # p
 
 
 @pytest.fixture(autouse=True)
-def _isolated_root_logger() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+def _isolated_root_logger() -> Iterator[None]:
     """Restore the root logger's handlers and level after every test."""
     root = logging.getLogger()
     saved_handlers = list(root.handlers)
@@ -115,7 +115,7 @@ def project_config_path() -> Path:
 
 
 @pytest.fixture(scope="session")
-def _project_config_baseline() -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]
+def _project_config_baseline() -> dict[str, Any]:
     """Immutable parse of the shipped ``config.yml``; use ``project_config_raw``."""
     return safe_load(PROJECT_CONFIG.read_text(encoding="utf-8"))
 

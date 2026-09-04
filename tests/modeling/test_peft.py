@@ -89,6 +89,6 @@ class TestPeftModule:
             assert unimplemented == {"adalora"}
 
         def test_the_registry_is_shared_not_rebuilt(self) -> None:
-            from reddit.modeling.peft import peft_config as reimported
+            from reddit.modeling.peft import peft_config as reimported  # noqa: PLC0415 — re-import is the test
 
             assert reimported is peft_config

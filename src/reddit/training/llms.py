@@ -123,7 +123,7 @@ class LlmSeedStrategy:
         """
         try:
             return model.get_nb_trainable_parameters()
-        except Exception:
+        except Exception:  # noqa: BLE001 — counts are informational; never worth failing a seed over
             return None, None
 
     def tokenize(self, ctx: SeedContext, bundle: DataBundle) -> Any:

@@ -8,6 +8,8 @@ the CLI something specific to catch and turn into a readable message.
 
 from __future__ import annotations
 
+from typing import override
+
 
 class RedditError(Exception):
     """Base class for every error this package raises deliberately."""
@@ -27,7 +29,9 @@ class UnknownFamilyError(ConfigError, KeyError):
     (and the config smoke tests) keep working.
     """
 
-    def __str__(self) -> str:  # KeyError.__str__ would add quotes around the message
+    @override
+    def __str__(self) -> str:
+        """The bare message: ``KeyError.__str__`` would wrap it in quotes."""
         return self.args[0] if self.args else ""
 
 
@@ -37,7 +41,9 @@ class UnknownModelError(ConfigError, KeyError):
     Also a :class:`KeyError`, for symmetry with :class:`UnknownFamilyError`.
     """
 
-    def __str__(self) -> str:  # KeyError.__str__ would add quotes around the message
+    @override
+    def __str__(self) -> str:
+        """The bare message: ``KeyError.__str__`` would wrap it in quotes."""
         return self.args[0] if self.args else ""
 
 

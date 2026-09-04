@@ -110,7 +110,7 @@ def build_jobs(config: Config, family: str, model_name: str, finetuning_method: 
     return jobs
 
 
-def label_corpus(
+def label_corpus(  # noqa: PLR0913 — mirrors `reddit.core.protocols.Labeller`
     *,
     config: Config,
     family: str,

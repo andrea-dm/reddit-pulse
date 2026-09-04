@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
             underlying response file does not exist, or the cached issue number
             is malformed.
     """
+    del argv  # reserved for future flags; every input comes from files and the environment
     issue_data = read_json_file(TMP_DIR, "issue_response.json")
     issue_iid = issue_data.get("number") or issue_data.get("iid")
 

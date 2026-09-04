@@ -64,7 +64,7 @@ def execute_run(args: Namespace, config: Config) -> int:
     # trained for hours. Imported only now: the environment
     # (CUDA_VISIBLE_DEVICES, HF_HOME) must be prepared before torch is imported.
     if any(models.kind != "bert" for models in selections):
-        from reddit.training.llms import validate_methods
+        from reddit.training.llms import validate_methods  # noqa: PLC0415 — after env prep
 
         for models in selections:
             if models.kind != "bert":
@@ -74,11 +74,11 @@ def execute_run(args: Namespace, config: Config) -> int:
     for models in selections:
         # Import pipelines only now, for the same reason as above.
         if models.kind == "bert":
-            from reddit.inference.bert import label_corpus
-            from reddit.training.bert import run_family
+            from reddit.inference.bert import label_corpus  # noqa: PLC0415 — after env prep
+            from reddit.training.bert import run_family  # noqa: PLC0415 — after env prep
         else:
-            from reddit.inference.llms import label_corpus
-            from reddit.training.llms import run_family
+            from reddit.inference.llms import label_corpus  # noqa: PLC0415 — after env prep
+            from reddit.training.llms import run_family  # noqa: PLC0415 — after env prep
 
         produced += run_family(
             config,

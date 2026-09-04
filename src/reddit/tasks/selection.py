@@ -8,9 +8,12 @@ live here once instead of being duplicated per task module.
 
 from __future__ import annotations
 
-from argparse import ArgumentParser, Namespace
+from typing import TYPE_CHECKING
 
-from reddit.core.config import Config, Models
+if TYPE_CHECKING:
+    from argparse import ArgumentParser, Namespace
+
+    from reddit.core.config import Config, Models
 
 
 def add_selection_arguments(parser: ArgumentParser) -> None:

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from argparse import ArgumentParser, Namespace
+from typing import TYPE_CHECKING
 
-from reddit.core.config import Config
 from reddit.tasks.selection import add_selection_arguments, resolve_selection
+
+if TYPE_CHECKING:
+    from argparse import ArgumentParser, Namespace
+
+    from reddit.core.config import Config
 
 
 def setup_predict(parser: ArgumentParser) -> None:
@@ -42,9 +46,9 @@ def execute_predict(args: Namespace, config: Config) -> int:
     for models in resolve_selection(args, config):
         # Deferred import: environment must be prepared before torch loads.
         if models.kind == "bert":
-            from reddit.inference.bert import predict_from_directories as predict_fn
+            from reddit.inference.bert import predict_from_directories as predict_fn  # noqa: PLC0415 — after env prep
         else:
-            from reddit.inference.llms import predict_from_archives as predict_fn
+            from reddit.inference.llms import predict_from_archives as predict_fn  # noqa: PLC0415 — after env prep
 
         labelled += predict_fn(config, models, args.directory)
     return labelled
