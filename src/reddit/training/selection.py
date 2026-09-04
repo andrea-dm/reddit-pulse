@@ -9,16 +9,19 @@ from __future__ import annotations
 import gc
 import logging
 from math import isfinite
-from pathlib import Path
 from shutil import rmtree
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pandas import Timestamp
 
-from reddit.core.config import Config
-from reddit.core.protocols import LogFn
 from reddit.core.utils import dump_object
-from reddit.training.loop import SeedResult
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from reddit.core.config import Config
+    from reddit.core.protocols import LogFn
+    from reddit.training.loop import SeedResult
 
 
 def select_median(
@@ -66,9 +69,9 @@ def select_median(
     gc.collect()
 
     if median.model.exists():
-        logging.info(f"Median seed: {median.seed}")
-        logging.info(f"Median metrics: {median.performance:,.6f}")
-        logging.info(f"Median model: `{median.model.name}`")
+        logging.info("Median seed: %s", median.seed)
+        logging.info("Median metrics: %s", f"{median.performance:,.6f}")
+        logging.info("Median model: `%s`", median.model.name)
         log(f"Selected model: `{median.model.name}` [{median.performance:,.6f}]", level="info")
 
         selection_dump = config.paths.results_dir / "selected_models_metrics.jsonl"

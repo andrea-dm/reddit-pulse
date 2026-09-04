@@ -7,14 +7,30 @@
   "useLibraryCodeForTypes": true,
   "stubPath": "stubs",
   "reportMissingModuleSource": "none",
+
+  "reportUnreachable": "error",
+  "reportUnnecessaryComparison": "error",
+  "reportPropertyTypeMismatch": "error",
+  "reportUninitializedInstanceVariable": "error",
+  "reportImplicitOverride": "error",
+  "reportMissingSuperCall": "error",
+  "reportUnnecessaryTypeIgnoreComment": "warning",
+  "deprecateTypingAliases": true,
+
+  "reportUnusedCallResult": "none",
+  "reportImplicitStringConcatenation": "none",
+  "reportCallInDefaultInitializer": "none",
+
   "include": [
     "src",
-    "tests"
+    "tests",
+    ".github/utils"
   ],
   "exclude": [
     "**/.*",
     "**/node_modules",
     "**/__pycache__",
+    "backup",
     "cache",
     "data",
     "dumps",
@@ -24,7 +40,9 @@
     "models",
     "notebooks",
     "outputs",
-    "results"
+    "results",
+    "tmp",
+    "work_in_progress"
   ],
   "executionEnvironments": [
     {
@@ -35,7 +53,20 @@
       ],
       "reportUnknownMemberType": false,
       "reportPrivateUsage": false,
-      "reportUnknownLambdaType": false
+      "reportUnknownLambdaType": false,
+      "reportUnusedFunction": false,
+      "reportImplicitOverride": "none",
+      "reportUninitializedInstanceVariable": "none",
+      "reportMissingSuperCall": "none",
+      "reportUnnecessaryComparison": "none"
+    },
+    {
+      "root": ".github/utils",
+      "extraPaths": [
+        "./.github/utils"
+      ],
+      "reportUninitializedInstanceVariable": "none",
+      "reportMissingSuperCall": "none"
     },
     {
       "root": ".",

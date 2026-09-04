@@ -27,11 +27,7 @@ def _dedup_url(search_term: str) -> str:
 
 def _assignee_usernames(issue: APIResponseObject) -> list[str]:
     assignees = get_json_nested_object_list(issue, "assignees")
-    return [
-        username
-        for user in assignees
-        if (username := get_json_string_member(user, "login"))
-    ]
+    return [username for user in assignees if (username := get_json_string_member(user, "login"))]
 
 
 def _label_list(meta: APIResponseObject) -> list[str]:

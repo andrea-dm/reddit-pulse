@@ -8,10 +8,18 @@ plain ``{model}_{seed}`` directories.
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Iterable
 from pathlib import Path
 from shutil import rmtree
+from typing import TYPE_CHECKING
 from zipfile import ZipFile
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable
+
+# `{model}_{method}_{seed}` (LLM archives) and `{model}_{seed}` (BERT
+# directories): the number of `_`-separated parts a valid checkpoint name has.
+LLM_ARCHIVE_PARTS = 3
+BERT_DIR_PARTS = 2
 
 
 def iter_model_archives(
@@ -43,32 +51,32 @@ def iter_model_archives(
     """
     parent_dir = Path(directory_path)
     if not parent_dir.is_dir():
-        logging.error(f"Directory not found at '{directory_path}'")
+        logging.error("Directory not found at '%s'", directory_path)
         return
 
     methods = set(methods)
-    logging.info(f"Scanning directory '{directory_path}' for model archives...")
+    logging.info("Scanning directory '%s' for model archives...", directory_path)
     for zip_path in sorted(parent_dir.glob("*.zip")):
         stem = zip_path.stem
         parts = stem.rsplit("_", 2)
 
-        if len(parts) == 3 and parts[1] in methods and parts[2].isdigit():
+        if len(parts) == LLM_ARCHIVE_PARTS and parts[1] in methods and parts[2].isdigit():
             model_name, finetuning_method, seed = parts
-            logging.info(f"Found model: `{model_name}` trained on {seed=} via {finetuning_method}")
+            logging.info("Found model: `%s` trained on %s via %s", model_name, seed, finetuning_method)
             unzip_path = zip_path.parent / stem
             try:
                 with ZipFile(zip_path, "r") as zip_ref:
                     zip_ref.extractall(unzip_path)
-                logging.info(f"`{zip_path.name}` unzipped to `{unzip_path.name}`.")
+                logging.info("`%s` unzipped to `%s`.", zip_path.name, unzip_path.name)
                 yield (model_name, finetuning_method, str(unzip_path))
             finally:
                 if unzip_path.exists():
                     rmtree(unzip_path)
-                    logging.info(f"`{unzip_path.name}` cleaned up.")
+                    logging.info("`%s` cleaned up.", unzip_path.name)
         else:
-            logging.warning(f"Skipping file with incorrect name format: `{zip_path.name}`")
+            logging.warning("Skipping file with incorrect name format: `%s`", zip_path.name)
 
-    logging.info(f"Scanning directory `{directory_path}` for models... done!")
+    logging.info("Scanning directory `%s` for models... done!", directory_path)
 
 
 def iter_model_dirs(directory_path: str | Path) -> Generator[tuple[str, str], None, None]:
@@ -85,16 +93,16 @@ def iter_model_dirs(directory_path: str | Path) -> Generator[tuple[str, str], No
     """
     parent_dir = Path(directory_path)
     if not parent_dir.is_dir():
-        logging.error(f"Directory not found at '{directory_path}'")
+        logging.error("Directory not found at '%s'", directory_path)
         return
 
-    logging.info(f"Scanning directory `{directory_path}` for models...")
+    logging.info("Scanning directory `%s` for models...", directory_path)
     for item_path in sorted(parent_dir.iterdir()):
         if item_path.is_dir():
             parts = item_path.name.rsplit("_", 1)
-            if len(parts) == 2 and parts[1].isdigit():
+            if len(parts) == BERT_DIR_PARTS and parts[1].isdigit():
                 model_name, seed = parts
-                logging.info(f"Found model: `{model_name}` trained on {seed=} at {item_path}")
+                logging.info("Found model: `%s` trained on %s at %s", model_name, seed, item_path)
                 yield (model_name, str(item_path))
 
-    logging.info(f"Scanning directory `{directory_path}` for models... done!")
+    logging.info("Scanning directory `%s` for models... done!", directory_path)

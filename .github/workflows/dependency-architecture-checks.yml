@@ -33,7 +33,8 @@ jobs:
         run: uv sync --only-group lint --no-install-project --default-index https://pypi.org/simple
 
       - name: Run ruff
-        run: uv run --no-sync ruff check src/ tests/
+        # No paths: `[tool.ruff] include` governs the linted set (src, tests, .github/utils).
+        run: uv run --no-sync ruff check
 
   tach:
     name: tach

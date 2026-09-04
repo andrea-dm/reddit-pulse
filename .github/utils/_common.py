@@ -33,9 +33,7 @@ def get_json_nested_object(source: APIResponseObject, *keys: str) -> APIResponse
     return current
 
 
-def get_json_object_list_member(
-    source: APIResponseObject, key: str
-) -> list[APIResponseObject]:
+def get_json_object_list_member(source: APIResponseObject, key: str) -> list[APIResponseObject]:
     value = source.get(key)
     if not isinstance(value, list):
         return []
@@ -43,9 +41,7 @@ def get_json_object_list_member(
     return [cast(APIResponseObject, item) for item in items if isinstance(item, dict)]
 
 
-def get_json_nested_object_list(
-    source: APIResponseObject, *keys: str
-) -> list[APIResponseObject]:
+def get_json_nested_object_list(source: APIResponseObject, *keys: str) -> list[APIResponseObject]:
     key_path = list(keys)
     if not key_path:
         return []
@@ -132,10 +128,7 @@ class GitHubAPI:
     def __init__(self) -> None:
         """Initialize the API client and validate the environment token."""
         if not (token := _get_token(TOKEN_ENV_VAR)):
-            raise SystemExit(
-                "GitHub token not found. "
-                + f"Set the '{TOKEN_ENV_VAR}' environment variable."
-            )
+            raise SystemExit(f"GitHub token not found. Set the '{TOKEN_ENV_VAR}' environment variable.")
         self._token = token
 
     @staticmethod
@@ -227,7 +220,7 @@ class GitHubAPI:
                 return cast(list[APIResponseObject], [])
             if not isinstance(parsed, list):
                 raise TypeError("Expected a JSON list response")
-            return  parsed
+            return parsed
 
         return cast(APIResponseObject, parsed)
 
@@ -244,9 +237,7 @@ class GitHubAPI:
         url = self._build_url(path)
         cmd = self._build_cmd(method, url, payload)
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
 
         parsed, status_code = self._parse_response(result.stdout)
 

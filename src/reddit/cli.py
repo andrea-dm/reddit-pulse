@@ -26,7 +26,6 @@ Examples:
 from __future__ import annotations
 
 import logging
-import multiprocessing
 import sys
 from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
 from pathlib import Path
@@ -134,19 +133,16 @@ def main(argv: list[str] | None = None) -> int:
     selection = selection_log_name(args)
     log_name = f"{args.command}_{selection}.log" if selection else f"{args.command}.log"
     setup_logging(log_file=config.paths.logs_dir / log_name)
-    logging.info(f"Loaded config from `{config_path}`.")
+    logging.info("Loaded config from `%s`.", config_path)
 
     # Env vars (CUDA_VISIBLE_DEVICES, HF_HOME, allocator) must be exported
     # before the task imports torch.
     prepare_environment(config, gpu=args.gpu)
 
-    # `force=True` never raises, so this needs no guard.
-    multiprocessing.set_start_method("spawn", force=True)
-
     if (sleep_time := config.system.sleep_time) > 0:
-        logging.info(f"Sleeping for {sleep_time:,d} seconds...")
+        logging.info("Sleeping for %s seconds...", f"{sleep_time:,d}")
         sleep(sleep_time)
-        logging.info(f"Sleeping for {sleep_time:,d} seconds... done.")
+        logging.info("Sleeping for %s seconds... done.", f"{sleep_time:,d}")
 
     try:
         produced = args.func(args, config)
@@ -155,11 +151,11 @@ def main(argv: list[str] | None = None) -> int:
         # configuration problems deserve a message, not a traceback.
         parser.error(str(e))
     except RedditError:
-        logging.exception(f"`{args.command}` failed")
+        logging.exception("`%s` failed", args.command)
         return 1
 
     if not produced:
-        logging.error(f"`{args.command}` finished without producing any model or labelled checkpoint.")
+        logging.error("`%s` finished without producing any model or labelled checkpoint.", args.command)
         return 1
     return 0
 

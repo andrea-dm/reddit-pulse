@@ -50,13 +50,13 @@ def now() -> str:
 
 
 def dump_object(d: dict[str, object]) -> bytes:
-    """Serialize a dict to one UTF-8 JSON line (a JSONL record) using orjson.
+    r"""Serialize a dict to one UTF-8 JSON line (a JSONL record) using orjson.
 
     Args:
         d: The record to serialize.
 
     Returns:
-        The JSON-encoded record as UTF-8 bytes, terminated with ``b"\\n"``.
+        The JSON-encoded record as UTF-8 bytes, terminated with ``b"\n"``.
 
     Raises:
         TypeError: ``d`` contains a value ``orjson`` cannot encode.
@@ -67,13 +67,18 @@ def dump_object(d: dict[str, object]) -> bytes:
         raise TypeError(f"Failed to encode to JSON: {e}") from e
 
 
-def archive_model(model_path: str | Path, archive_name: str) -> None:
+def archive_model(model_path: str | Path, archive_name: str) -> bool:
     """Zip a saved model directory then remove the directory.
 
     Args:
         model_path: Directory to archive and then delete.
         archive_name: Destination archive path, without the ``.zip``
             extension (``shutil.make_archive`` appends it).
+
+    Returns:
+        ``True`` when the archive was written (and the directory removed),
+        ``False`` when zipping failed — in which case ``model_path`` is left
+        untouched, so a failed archive can never cost the checkpoint itself.
 
     Notes:
         Writes ``{archive_name}.zip`` and deletes ``model_path`` (I/O).
@@ -83,11 +88,13 @@ def archive_model(model_path: str | Path, archive_name: str) -> None:
     try:
         make_archive(archive_name, "zip", model_path)
     except Exception as e:
-        logging.warning(f"Could not zip the dumped model `{Path(model_path).name}`: {e}", exc_info=True)
+        logging.warning("Could not zip the dumped model `%s`: %s", Path(model_path).name, e, exc_info=True)
+        return False
     try:
         rmtree(model_path, ignore_errors=True)
     except Exception as e:
-        logging.warning(f"Could not clear the dumped model `{Path(model_path).name}`: {e}", exc_info=True)
+        logging.warning("Could not clear the dumped model `%s`: %s", Path(model_path).name, e, exc_info=True)
+    return True
 
 
 def clear_hf_cache(model_id: str, extra_cache_dirs: list[Path] | None = None) -> None:
@@ -117,11 +124,11 @@ def clear_hf_cache(model_id: str, extra_cache_dirs: list[Path] | None = None) ->
     for path in paths_to_check:
         model_path = path / "hub" / model_dir_name
         if model_path.is_dir():
-            logging.info(f"Found model `{model_id}` in cache at `{model_path}`")
+            logging.info("Found model `%s` in cache at `%s`", model_id, model_path)
             try:
                 rmtree(model_path)
-                logging.info(f"Successfully deleted `{model_id}` from cache.")
+                logging.info("Successfully deleted `%s` from cache.", model_id)
             except OSError as e:
-                logging.info(f"Error deleting `{model_path}` from cache: {e}")
+                logging.info("Error deleting `%s` from cache: %s", model_path, e)
         else:
-            logging.info(f"Model `{model_id}` not found in cache at `{path / 'hub'}`.")
+            logging.info("Model `%s` not found in cache at `%s`.", model_id, path / "hub")

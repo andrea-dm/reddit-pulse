@@ -9,9 +9,8 @@ process environment).
 from __future__ import annotations
 
 import logging
-import multiprocessing
 from argparse import Namespace
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,16 +35,6 @@ class FuncRecorder:
         if self.raises is not None:
             raise self.raises
         return self.returns
-
-
-@pytest.fixture(autouse=True)
-def _restore_multiprocessing_start_method() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """``main`` forces the ``spawn`` start method process-wide."""
-    original = multiprocessing.get_start_method()
-    try:
-        yield
-    finally:
-        multiprocessing.set_start_method(original, force=True)
 
 
 class TestCliModule:
@@ -247,7 +236,7 @@ class TestCliModule:
         def test_the_gpu_selection_is_exported_before_the_pipeline_runs(
             self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
         ) -> None:
-            import os
+            import os  # noqa: PLC0415 — scoped to this test
 
             run_main("run", "-f", "llm_family", "--gpu", "0,1")
 
@@ -289,14 +278,6 @@ class TestCliModule:
 
             assert slept == []
 
-        def test_the_spawn_start_method_is_forced(
-            self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
-        ) -> None:
-            """CUDA cannot be re-initialised in a forked worker."""
-            run_main("run", "-f", "llm_family")
-
-            assert multiprocessing.get_start_method() == "spawn"
-
         def test_train_reaches_the_pipeline_with_labelling_disabled(
             self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
         ) -> None:
@@ -307,10 +288,10 @@ class TestCliModule:
 
     @pytest.mark.integration
     class TestConfigFailures:
-        """A bad configuration must become a usage message, not a traceback.
+        r"""A bad configuration must become a usage message, not a traceback.
 
         ``load_config`` wraps pydantic's ``ValidationError`` and validator
-        ``OSError``\\ s into ``ConfigError``, which ``main`` turns into a
+        ``OSError``\ s into ``ConfigError``, which ``main`` turns into a
         ``parser.error`` (exit code 2).  Regression tests for the previously
         unreachable ``except ConfigError`` guard.
         """

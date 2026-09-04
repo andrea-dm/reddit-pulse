@@ -22,7 +22,7 @@ from functools import partial
 from itertools import product
 from shutil import rmtree
 from time import monotonic_ns
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from peft import get_peft_model, prepare_model_for_kbit_training
@@ -36,16 +36,18 @@ from transformers import (
     TrainingArguments,
 )
 
-from reddit.core.config import Config, Models, ModelSpec
 from reddit.core.errors import UnsupportedMethodError
 from reddit.core.logging import print_log
-from reddit.core.protocols import Labeller, LogFn
 from reddit.core.utils import archive_model, clear_hf_cache, fmt_td
-from reddit.data.preparation import DataBundle
 from reddit.modeling.loading import LLM_MAX_LENGTH, llm_model_args
 from reddit.modeling.peft import peft_config
 from reddit.training.loop import SeedContext, run_seeds
 from reddit.training.selection import select_median
+
+if TYPE_CHECKING:
+    from reddit.core.config import Config, Models, ModelSpec
+    from reddit.core.protocols import Labeller, LogFn
+    from reddit.data.preparation import DataBundle
 
 
 class LlmSeedStrategy:
@@ -121,7 +123,7 @@ class LlmSeedStrategy:
         """
         try:
             return model.get_nb_trainable_parameters()
-        except Exception:
+        except Exception:  # noqa: BLE001 — counts are informational; never worth failing a seed over
             return None, None
 
     def tokenize(self, ctx: SeedContext, bundle: DataBundle) -> Any:
@@ -132,13 +134,19 @@ class LlmSeedStrategy:
             bundle: Prepared gold dataset with a ``"text"`` column.
 
         Returns:
-            The tokenized ``DatasetDict``, with the raw ``"text"`` column
+            The tokenized ``DatasetDict``, truncated to
+            :data:`reddit.modeling.loading.LLM_MAX_LENGTH` (the length
+            inference truncates at too), with the raw ``"text"`` column
             dropped and tensors returned in torch format.
         """
         tokenizer = ctx.tokenizer
 
         def tokenize_batch(examples):
-            return tokenizer(examples["text"], truncation=True)
+            # `max_length` must be given per call: passing it to
+            # `AutoTokenizer.from_pretrained` only parks it in `init_kwargs`,
+            # which left training truncating at the model's own limit (8k+)
+            # while inference truncated at LLM_MAX_LENGTH.
+            return tokenizer(examples["text"], truncation=True, max_length=LLM_MAX_LENGTH)
 
         tokenized = bundle.dataset.map(tokenize_batch, batched=True, desc="Tokenizing dataset")
         tokenized = tokenized.remove_columns(["text"])
@@ -186,12 +194,12 @@ class LlmSeedStrategy:
         )
 
     def optimizers(self, ctx: SeedContext, model: Any) -> tuple[Any, Any]:
-        """Build the LoRA+ optimizer that completes the QDoRA+/xQDoRA+ recipe.
+        r"""Build the LoRA+ optimizer that completes the QDoRA+/xQDoRA+ recipe.
 
         Constructs an ``AdamW`` optimizer with decoupled weight decay under
         the LoRA+ asymmetric learning-rate scheme: the low-rank adapter's
         ``B`` matrix is trained at ``loraplus_lr_ratio`` times the base
-        learning rate applied to ``A`` (:math:`\\eta_B = 5 \\cdot \\eta_A`),
+        learning rate applied to ``A`` (:math:`\eta_B = 5 \cdot \eta_A`),
         which the LoRA+ paper shows more effectively balances the two
         matrices' contributions during PEFT fine-tuning.
 
@@ -246,14 +254,7 @@ def run_model(
     log(f"Preparing for `{finetuning_method}`...")
     t1 = monotonic_ns()
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model.id,
-        truncation=True,
-        max_length=LLM_MAX_LENGTH,
-        padding="max_length",
-        use_fast=True,
-        cache_dir=hf_cache,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model.id, use_fast=True, cache_dir=hf_cache)
     tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
     tokenizer.padding_side = "left"
 
@@ -301,7 +302,7 @@ def run_model(
                 f"Something unexpected occurred in the inference process: {e}\n{traceback.format_exc()}",
                 level="critical",
             )
-            logging.critical(f"Something unexpected occurred in the inference process: {e}", exc_info=True)
+            logging.critical("Something unexpected occurred in the inference process: %s", e, exc_info=True)
         log(f"Inference via `{finetuning_method}`... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
     log("Cleaning up...")
@@ -316,6 +317,29 @@ def run_model(
     log(f"Cleaning up... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
     return median_model is not None
+
+
+def validate_methods(models: Models) -> None:
+    """Check that every declared fine-tuning method has a PEFT recipe.
+
+    Called by :func:`run_family` and, earlier, by the ``run``/``train`` task
+    for every selected LLM family *before* any training starts — so a typo
+    in the last family of ``--family a b c`` no longer surfaces only after
+    families ``a`` and ``b`` have trained for hours.
+
+    Args:
+        models: The resolved family selection to check.
+
+    Raises:
+        UnsupportedMethodError: a declared method has no entry in
+            :data:`reddit.modeling.peft.peft_config`.
+    """
+    unsupported = [m for m in models.finetuning_methods if m not in peft_config]
+    if unsupported:
+        raise UnsupportedMethodError(
+            f"No PEFT configuration registered for: {', '.join(unsupported)}. "
+            f"Available: {', '.join(sorted(peft_config))}."
+        )
 
 
 def run_family(
@@ -337,21 +361,17 @@ def run_family(
         The number of (model, method) runs that produced a selected checkpoint.
 
     Raises:
-        UnsupportedMethodError: a declared method has no PEFT configuration.
+        UnsupportedMethodError: a declared method has no PEFT configuration
+            (see :func:`validate_methods`).
     """
-    logging.info(f"Found {torch.cuda.device_count()} GPUs available for the pool.")
-    logging.info(f"Found {len(models.models)} models in the config to train.")
+    logging.info("Found %s GPUs available for the pool.", torch.cuda.device_count())
+    logging.info("Found %s models in the config to train.", len(models.models))
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
+    validate_methods(models)
     methods = models.finetuning_methods
-    unsupported = [m for m in methods if m not in peft_config]
-    if unsupported:
-        raise UnsupportedMethodError(
-            f"No PEFT configuration registered for: {', '.join(unsupported)}. "
-            f"Available: {', '.join(sorted(peft_config))}."
-        )
 
     seeds = tuple(config.training.seeds[:limit] if limit > 0 else config.training.seeds)
 
@@ -359,7 +379,7 @@ def run_family(
     t1_run = monotonic_ns()
 
     n_methods = len(methods)
-    logging.info(f"Found {n_methods:,d} fine-tuning methods to apply.")
+    logging.info("Found %s fine-tuning methods to apply.", f"{n_methods:,d}")
     track_trained_models: dict[str, set[str]] = {m.name: set() for m in models.models}
     selected = 0
 
@@ -376,7 +396,7 @@ def run_family(
 
         track_trained_models[model.name].add(finetuning_method)
         if len(track_trained_models[model.name]) == n_methods:
-            logging.info(f"All the finetuning methods for `{model.name}` have been run. Cleaning from memory...")
+            logging.info("All the finetuning methods for `%s` have been run. Cleaning from memory...", model.name)
             clear_hf_cache(
                 model.id,
                 extra_cache_dirs=[config.environment.hf_home] if config.environment.hf_home else None,
@@ -384,11 +404,11 @@ def run_family(
             rmtree(config.hf_home / model.name, ignore_errors=True)
             track_trained_models.pop(model.name)
             gc.collect()
-            logging.info(f"All the finetuning methods for `{model.name}` have been run. Cleaning from memory... done.")
+            logging.info("All the finetuning methods for `%s` have been run. Cleaning from memory... done.", model.name)
 
         t2 = monotonic_ns()
         log(f"Running `{model.name}-{finetuning_method}`... done: it took {fmt_td(t2 - t1)}.\n", level=None)
         log(f"Elapsed time since the job was launched: {fmt_td(t2 - t1_run)}.\n", level=None)
 
-    logging.info(f"Running ended. It took {fmt_td(monotonic_ns() - t1_run)}.")
+    logging.info("Running ended. It took %s.", fmt_td(monotonic_ns() - t1_run))
     return selected

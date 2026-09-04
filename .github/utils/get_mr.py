@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     Raises:
         SystemExit: If the targeted pull request metadata configuration file is absent.
     """
+    del argv  # reserved for future flags; every input comes from files and the environment
     data = read_json_file(WORKING_DIR, "mr.json")
 
     iid = data.get("number") or data.get("iid")
@@ -41,11 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         or get_json_string_member(get_json_object_member(data, "merged_by"), "username")
         or "N/A"
     )
-    web_url = (
-        get_json_string_member(data, "html_url")
-        or get_json_string_member(data, "web_url")
-        or ""
-    )
+    web_url = get_json_string_member(data, "html_url") or get_json_string_member(data, "web_url") or ""
 
     print(f"PR #{iid}: {title}")
     print(f"  State:     {state}")

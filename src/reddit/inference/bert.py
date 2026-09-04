@@ -17,21 +17,24 @@ import datetime
 import logging
 import os
 from functools import partial
-from pathlib import Path
 from shutil import rmtree
 from time import monotonic_ns
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
-from reddit.core.config import Config, Models
 from reddit.core.logging import print_log
-from reddit.core.protocols import LogFn
 from reddit.core.utils import fmt_td
 from reddit.inference.corpus import CorpusJob, predict_corpus
 from reddit.inference.discovery import iter_model_dirs
 from reddit.modeling.loading import BERT_MAX_LENGTH, bert_model_args
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from reddit.core.config import Config, Models
+    from reddit.core.protocols import LogFn
 
 
 def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
@@ -100,7 +103,7 @@ def build_jobs(config: Config, model_name: str) -> list[CorpusJob]:
     return jobs
 
 
-def label_corpus(
+def label_corpus(  # noqa: PLR0913 — mirrors `reddit.core.protocols.Labeller`
     *,
     config: Config,
     family: str = "",
@@ -132,7 +135,7 @@ def label_corpus(
         Loads the checkpoint and reads/writes the corpus and answers files
         transitively via :func:`reddit.inference.corpus.predict_corpus`.
     """
-    logging.info(f"Labelling... (family=`{family or '-'}`, method=`{finetuning_method}`)")
+    logging.info("Labelling... (family=`%s`, method=`%s`)", family or "-", finetuning_method)
     t1_task = monotonic_ns()
 
     loaded_model = AutoModelForSequenceClassification.from_pretrained(
@@ -145,7 +148,7 @@ def label_corpus(
         predict_corpus(loaded_model, tokenizer, config, job, log=log)
         log(f"Labelling {job.name}... done: it took {fmt_td(monotonic_ns() - t1)}.", level="info")
 
-    logging.info(f"Labelling... done: it took {fmt_td(monotonic_ns() - t1_task)}.")
+    logging.info("Labelling... done: it took %s.", fmt_td(monotonic_ns() - t1_task))
 
 
 def _predict_one(config: Config, models: Models, model_name: str, model_path: str, log: LogFn) -> None:
@@ -189,14 +192,14 @@ def _predict_one(config: Config, models: Models, model_name: str, model_path: st
         )
     except Exception as e:
         log(f"Something unexpected occurred in the inference process: {e}", level="critical")
-        logging.critical(f"Something unexpected occurred in the inference process: {e}", exc_info=True)
+        logging.critical("Something unexpected occurred in the inference process: %s", e, exc_info=True)
     finally:
         log(f"Inference... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
-    logging.info(f"Cleaning up model `{model_name}` artifacts...")
+    logging.info("Cleaning up model `%s` artifacts...", model_name)
     rmtree(cache_dir, ignore_errors=True)
     rmtree(hf_cache, ignore_errors=True)
-    logging.info(f"Cleaning up model `{model_name}` artifacts... done.")
+    logging.info("Cleaning up model `%s` artifacts... done.", model_name)
 
 
 def predict_from_directories(config: Config, models: Models, directory: str | Path) -> int:
@@ -213,18 +216,18 @@ def predict_from_directories(config: Config, models: Models, directory: str | Pa
     Returns:
         The number of checkpoints that were labelled.
     """
-    logging.info(f"Found {torch.cuda.device_count()} GPUs available for the pool.")
-    logging.info(f"Found {len(models.models)} models in the config.")
+    logging.info("Found %s GPUs available for the pool.", torch.cuda.device_count())
+    logging.info("Found %s models in the config.", len(models.models))
     logging.info("Running started.")
     t1_run = monotonic_ns()
 
     list_of_models = [model.name for model in models.models]
-    logging.info(f"Models to be used: {', '.join(list_of_models)}")
+    logging.info("Models to be used: %s", ", ".join(list_of_models))
 
     processed = 0
     for model_name, model_path in iter_model_dirs(directory):
         if model_name not in list_of_models:
-            logging.warning(f"Model `{model_name}` not found in the config. Skipping...")
+            logging.warning("Model `%s` not found in the config. Skipping...", model_name)
             continue
 
         log_file = config.paths.logs_dir / f"{model_name}_{config.system.date}.log"
@@ -234,5 +237,5 @@ def predict_from_directories(config: Config, models: Models, directory: str | Pa
         _predict_one(config, models, model_name, model_path, log)
         processed += 1
 
-    logging.info(f"Running ended. It took {fmt_td(monotonic_ns() - t1_run)}.")
+    logging.info("Running ended. It took %s.", fmt_td(monotonic_ns() - t1_run))
     return processed

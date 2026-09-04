@@ -38,7 +38,8 @@ outputs/ results/ labelled/ logs/   # run artefacts
 
 ```bash
 uv venv && uv pip install -e .
-# optional, needs a CUDA toolchain:
+# optional, Ampere-or-newer GPUs only (needs a CUDA toolchain to build;
+# older GPUs such as the T4 use SDPA attention automatically):
 uv pip install flash-attn --no-build-isolation
 ```
 
@@ -48,7 +49,7 @@ under `environment.dotenv` in `config.yml`.
 Quality gates (also run in CI — see `.github/workflows/`):
 
 ```bash
-ruff check src/ tests/
+ruff check           # paths come from [tool.ruff] include in pyproject.toml
 pyright              # strict; config + venv pinned in pyrightconfig.json
 tach check           # module boundaries (layering declared in tach.toml)
 deptry src           # dependency hygiene (config in pyproject.toml)
