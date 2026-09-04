@@ -444,6 +444,23 @@ class TestConfigModule:
             assert ArgumentsConfig().seed == 42
             assert "seed" in ArgumentsConfig().model_dump()
 
+        def test_no_experiment_tracker_is_spelled_none_not_null(self) -> None:
+            """transformers 5 wraps `None` as `[None]` and the Trainer then rejects it."""
+            assert ArgumentsConfig().report_to == "none"
+            assert ArgumentsConfig(report_to=None).report_to == "none"  # pyright: ignore[reportArgumentType]
+
+        @pytest.mark.parametrize("report_to", ["tensorboard", ["mlflow", "wandb"], "all"])
+        def test_a_named_experiment_tracker_passes_through(self, report_to: str | list[str]) -> None:
+            assert ArgumentsConfig(report_to=report_to).report_to == report_to
+
+        def test_a_null_report_to_in_yaml_is_coerced(
+            self, raw_config: dict[str, Any], write_config: Callable[..., Path]
+        ) -> None:
+            """Older config files spell "no tracker" as `report_to: null`."""
+            raw_config["training"]["arguments"] = {"fp16": False, "report_to": None}
+
+            assert load_config(write_config(raw_config)).training.arguments.report_to == "none"
+
         def test_an_unsupported_performance_metric_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 ArgumentsConfig(metric_for_best_model="auc")  # pyright: ignore[reportArgumentType]

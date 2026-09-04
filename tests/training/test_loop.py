@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 import torch
 from pandas import DataFrame
-from transformers import set_seed
+from transformers import TrainingArguments, set_seed
 
 from reddit.core.config import Config, ModelSpec
 from reddit.core.errors import ConfigError
@@ -54,8 +54,10 @@ class ExplodingStrategy:
 
     def training_arguments(self, ctx: Any) -> Any:
         # Resolved once by the preflight, before any seed; a stand-in carrying
-        # the fixed model-init/training seed is enough.
-        return SimpleNamespace(seed=42)
+        # the fixed model-init/training seed and no reporting integration
+        # (what a real `TrainingArguments(report_to="none")` resolves to) is
+        # enough.
+        return SimpleNamespace(seed=42, report_to=[])
 
     def optimizers(self, ctx: Any, model: Any) -> tuple[Any, Any]:  # pragma: no cover - unreachable
         return None, None
@@ -70,7 +72,7 @@ class InitProbeStrategy(ExplodingStrategy):
         self.draws: list[float] = []
 
     def training_arguments(self, ctx: Any) -> Any:
-        return SimpleNamespace(seed=self.fixed_seed)
+        return SimpleNamespace(seed=self.fixed_seed, report_to=[])
 
     def build_model(self, ctx: Any, bundle: Any) -> tuple[Any, Any]:
         self.draws.append(torch.rand(()).item())
@@ -82,6 +84,18 @@ class MisconfiguredStrategy(ExplodingStrategy):
 
     def training_arguments(self, ctx: Any) -> Any:
         raise TypeError("__init__() got an unexpected keyword argument 'overwrite_output_dir'")
+
+
+class UnknownTrackerStrategy(ExplodingStrategy):
+    """Real ``TrainingArguments`` naming an experiment tracker transformers does not know.
+
+    ``TrainingArguments`` itself accepts any string here; only the Trainer's
+    constructor rejects it — which is what a YAML ``null`` (wrapped as
+    ``[None]`` by transformers 5) used to trigger once per seed.
+    """
+
+    def training_arguments(self, ctx: Any) -> Any:
+        return TrainingArguments(output_dir=str(ctx.cache_dir), report_to="no_such_tracker", seed=42)
 
 
 def with_precision(config: Config, *, bf16: bool, fp16: bool) -> Config:
@@ -343,6 +357,21 @@ class TestLoopModule:
             strategy = MisconfiguredStrategy()
 
             with pytest.raises(ConfigError, match="overwrite_output_dir"):
+                run_seeds(seed_context, strategy)
+
+            assert strategy.build_calls == 0
+
+        def test_an_unknown_reporting_integration_is_reported_once_as_a_config_error(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            """The Trainer only resolves `report_to` in its constructor, i.e. once per seed.
+
+            A `report_to: null` in `config.yml` hit exactly this path under
+            transformers 5 and failed every seed of a run the same way.
+            """
+            strategy = UnknownTrackerStrategy()
+
+            with pytest.raises(ConfigError, match="no_such_tracker is not supported"):
                 run_seeds(seed_context, strategy)
 
             assert strategy.build_calls == 0

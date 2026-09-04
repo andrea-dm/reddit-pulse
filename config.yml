@@ -62,7 +62,7 @@ training:
     seed: 42
     save_total_limit: 2
     save_on_each_node: false
-    report_to: null
+    report_to: none       # no experiment tracker; `null` is no longer accepted by transformers 5
     push_to_hub: false
     disable_tqdm: true
     # --- Performance ---

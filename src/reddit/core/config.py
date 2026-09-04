@@ -265,7 +265,12 @@ class ArgumentsConfig(BaseModel):
 
     save_total_limit: int = 2
     save_on_each_node: bool = False
-    report_to: str | None = None
+    # "none" disables every experiment-tracking integration. transformers 5
+    # no longer understands ``None`` here: ``TrainingArguments`` wraps it as
+    # ``[None]`` and the Trainer then rejects it as an unknown integration —
+    # once per seed, failing them all. A YAML ``null`` is coerced to "none"
+    # (see `_coerce_report_to`) so older config files keep working.
+    report_to: str | list[str] = "none"
     push_to_hub: bool = False
     disable_tqdm: bool = True
     # --- Reproducibility ----------------------------------------------
@@ -295,6 +300,11 @@ class ArgumentsConfig(BaseModel):
     load_best_model_at_end: bool = True
     metric_for_best_model: PerformanceMetric = "f1_weighted"
     greater_is_better: bool = True
+
+    @field_validator("report_to", mode="before")
+    @classmethod
+    def _coerce_report_to(cls, value: object) -> object:
+        return "none" if value is None else value
 
     @model_validator(mode="after")
     def _check_precision(self) -> ArgumentsConfig:
