@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The seed protocol is now what the paper describes — the split is the
+  run's only variable. `training.arguments.seed` (pinned to `42` in
+  `config.yml` and `ArgumentsConfig`, previously the unpinned transformers
+  default) seeds both model initialisation and the Trainer's own
+  shuffling/dropout; `run_seeds` re-seeds from it right before building
+  the model, so PEFT-adapter and classification-head init no longer follow
+  the split seed (`src/reddit/training/loop.py`, `src/reddit/core/config.py`).
+
 ### Added
 
 - `reddit.modeling.loading.DeviceProfile` / `detect_device_profile`: the

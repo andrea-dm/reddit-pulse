@@ -60,7 +60,9 @@ class SeedContext:
         run_name: Unique run identifier, embedded in log/output paths.
         cache_dir: Per-run training cache directory (``TrainingArguments.output_dir``).
         hf_cache: Hugging Face Hub cache directory for this model.
-        seeds: Every seed this (model, method) run will iterate over.
+        seeds: Every split seed this (model, method) run will iterate over
+            (each draws a different gold-dataset partition; model init and
+            training are seeded from the fixed ``training.arguments.seed``).
         tokenizer: Tokenizer shared across all seeds of this run.
         log: Human-oriented progress logger.
     """
@@ -82,7 +84,9 @@ class SeedResult:
     """Outcome of fine-tuning one seed.
 
     Attributes:
-        seed: The random seed used for this run (split + ``set_seed``).
+        seed: The split seed of this run (the gold-dataset partition it
+            was trained on; model init and training used the fixed
+            ``training.arguments.seed``).
         performance: Test-split weighted F1 (``float("nan")`` if unavailable),
             the ranking key for :func:`reddit.training.selection.select_median`.
         method: Fine-tuning method label (mirrors :attr:`SeedContext.finetuning_method`).
@@ -279,7 +283,8 @@ def _run_one_seed(ctx: SeedContext, strategy: SeedStrategy, plan: _RunPlan, seed
         ctx: Run-scoped context.
         strategy: The kind-specific behaviour.
         plan: Seed-invariant material from :func:`_preflight`.
-        seed: The seed to fine-tune on (data split + ``set_seed``).
+        seed: The split seed: selects the stratified gold-dataset partition
+            and nothing else.
         k: 1-based ordinal of this seed, for ``(k/n)`` progress lines.
 
     Returns:
@@ -301,6 +306,12 @@ def _run_one_seed(ctx: SeedContext, strategy: SeedStrategy, plan: _RunPlan, seed
         labels=config.labels,
     )
 
+    # The split above is the run's only variable: model initialisation (PEFT
+    # adapters, the classification head) is re-seeded from the same fixed
+    # value the Trainer re-seeds itself from, so every split trains the same
+    # model the same way on different data — the paper's design. Previously
+    # the split seed also drove the init, confounding the two.
+    set_seed(plan.args.seed)
     model, model_conf = strategy.build_model(ctx, bundle)
     parameters = strategy.parameter_counts(model)
     tokenized_dataset = strategy.tokenize(ctx, bundle)
@@ -378,7 +389,10 @@ def run_seeds(ctx: SeedContext, strategy: SeedStrategy) -> dict[int, SeedResult]
     seed in ``ctx.seeds``: reloads and re-splits the gold dataset
     (:func:`reddit.data.preparation.load_and_prepare_data`, seeded so every
     seed sees a different stratified train/validation/test partition),
-    builds the model and optimizer via ``strategy``, fine-tunes with
+    re-seeds from the fixed ``training.arguments.seed`` so that model
+    initialisation and training are identical across splits (the split is
+    the run's only variable), builds the model and optimizer via
+    ``strategy``, fine-tunes with
     :class:`reddit.modeling.trainer.WeightedLossTrainer` (class-weighted
     cross-entropy, balanced by ``sklearn.utils.class_weight``) under
     early stopping, evaluates, tests, and saves the checkpoint.
@@ -415,8 +429,6 @@ def run_seeds(ctx: SeedContext, strategy: SeedStrategy) -> dict[int, SeedResult]
     results: dict[int, SeedResult] = {}
 
     for k, seed in enumerate(ctx.seeds, start=1):
-        set_seed(seed)
-
         try:
             results[seed] = _run_one_seed(ctx, strategy, plan, seed, k)
         except FATAL_ERRORS as e:

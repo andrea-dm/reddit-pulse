@@ -268,6 +268,16 @@ class ArgumentsConfig(BaseModel):
     report_to: str | None = None
     push_to_hub: bool = False
     disable_tqdm: bool = True
+    # --- Reproducibility ----------------------------------------------
+    # One fixed seed for everything that is *not* the data split: model
+    # initialisation (re-seeded from this value right before the model is
+    # built, see `reddit.training.loop._run_one_seed`) and the Trainer's own
+    # shuffling/dropout (it re-seeds itself from `TrainingArguments.seed`).
+    # The per-run `training.seeds` vary the stratified split only, so
+    # seed-to-seed variance measures split sensitivity, not optimiser noise.
+    # Pinned rather than left to the transformers default so a library
+    # change cannot silently alter the protocol.
+    seed: int = 42
     # --- Performance --------------------------------------------------
     # Mutually exclusive (see `_check_precision`); `bf16` additionally needs
     # an Ampere-or-newer GPU, which `reddit.training.loop.run_seeds` checks
@@ -314,7 +324,10 @@ class TrainingConfig(BaseModel):
         early_stopping_patience: Epochs without eval-metric improvement
             before :class:`transformers.EarlyStoppingCallback` stops a seed.
         arguments: Pass-through ``transformers.TrainingArguments`` fields.
-        seeds: Random seeds fine-tuned over per (model, method); see
+        seeds: Split seeds fine-tuned over per (model, method): each one
+            draws a different stratified train/validation/test partition
+            of the gold dataset and nothing else — model initialisation and
+            training are re-seeded from the fixed ``arguments.seed``; see
             :func:`reddit.training.loop.run_seeds`.
         finetuning_methods: Default PEFT methods (QDoRA+/xQDoRA+) for LLM
             families that do not declare their own under ``families:``.

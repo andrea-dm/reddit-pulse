@@ -12,7 +12,15 @@ subset (see `config.yml`).
 
 ## Multi-seed training lifecycle
 
-`reddit.training.loop.run_seeds` is the shared lifecycle for both kinds:
+`reddit.training.loop.run_seeds` is the shared lifecycle for both kinds.
+The seeds in `training.seeds` are *split* seeds: each one draws a
+different stratified train/validation/test partition of the gold dataset,
+and that partition is the only thing that varies between runs. Model
+initialisation (PEFT adapters, the classification head) is re-seeded from
+the fixed `training.arguments.seed` right before the model is built, and
+`transformers.Trainer` re-seeds itself from the same value for its
+shuffling and dropout, so seed-to-seed variance measures sensitivity to
+the split, not optimiser noise.
 
 ```mermaid
 sequenceDiagram

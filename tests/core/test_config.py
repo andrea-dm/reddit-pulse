@@ -439,6 +439,11 @@ class TestConfigModule:
             assert arguments.eval_strategy == "epoch"
             assert arguments.save_total_limit == 2
 
+        def test_the_fixed_seed_is_pinned_to_42(self) -> None:
+            """Explicit, so a transformers default change cannot alter the protocol."""
+            assert ArgumentsConfig().seed == 42
+            assert "seed" in ArgumentsConfig().model_dump()
+
         def test_an_unsupported_performance_metric_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 ArgumentsConfig(metric_for_best_model="auc")  # pyright: ignore[reportArgumentType]
