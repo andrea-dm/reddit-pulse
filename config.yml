@@ -57,6 +57,9 @@ training:
   # Splatted verbatim into `transformers.TrainingArguments`; every key must be
   # a valid constructor parameter for the installed transformers version.
   arguments:
+    # One fixed seed for model initialisation and the Trainer's own
+    # shuffling/dropout; the `seeds` list below varies the data split only.
+    seed: 42
     save_total_limit: 2
     save_on_each_node: false
     report_to: null

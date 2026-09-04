@@ -8,11 +8,23 @@ worker-pool concurrency: the pipelines do not spawn subprocesses (the only
 child processes are the `DataLoader` workers `transformers.Trainer` forks,
 which never touch CUDA). Parallelism across GPUs is achieved externally,
 by launching one `reddit` process per GPU against a disjoint `--model`
-subset (see `config.yml`).
+subset (see `config.yml`). Those processes meet only at the consolidated
+answers file, whose read-merge-write is serialised through a lock
+directory (`<answers>.lock/`, see `reddit.inference.corpus.update_answers`)
+so that two models of the same family cannot overwrite each other's
+columns; everything else they write is per-model.
 
 ## Multi-seed training lifecycle
 
-`reddit.training.loop.run_seeds` is the shared lifecycle for both kinds:
+`reddit.training.loop.run_seeds` is the shared lifecycle for both kinds.
+The seeds in `training.seeds` are *split* seeds: each one draws a
+different stratified train/validation/test partition of the gold dataset,
+and that partition is the only thing that varies between runs. Model
+initialisation (PEFT adapters, the classification head) is re-seeded from
+the fixed `training.arguments.seed` right before the model is built, and
+`transformers.Trainer` re-seeds itself from the same value for its
+shuffling and dropout, so seed-to-seed variance measures sensitivity to
+the split, not optimiser noise.
 
 ```mermaid
 sequenceDiagram

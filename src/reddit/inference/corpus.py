@@ -32,7 +32,10 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import time
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from shutil import rmtree
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -40,9 +43,10 @@ from pandas import DataFrame, concat, read_csv, read_json
 from tqdm import tqdm
 
 from reddit.core.errors import CorpusUnavailableError
-from reddit.core.utils import dump_object
+from reddit.core.utils import dump_object, now
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from reddit.core.config import Config, LabelsConfig
@@ -59,6 +63,17 @@ SUBREDDITS = ["economy", "economics", "wallstreetbets"]
 # transient parsing overhead; the final frame is still built whole because the
 # answers-file merge needs it whole.
 DUMP_CHUNK_ROWS = 200_000
+
+# The answers file is a shared read-modify-write target: two `reddit` processes
+# labelling different models of the same family (the documented way to split
+# work across GPUs) both read it, merge their own columns in and write it back,
+# the second writer silently dropping the first one's columns. The atomic
+# rename in `update_answers` protects against a torn file, not against that
+# lost update, so the whole read-merge-write runs under `_answers_lock`.
+# A merge of a multi-million-row CSV takes minutes; a lock older than the
+# timeout belongs to a process that died without releasing it.
+ANSWERS_LOCK_TIMEOUT = 30 * 60  # seconds
+ANSWERS_LOCK_POLL = 1.0  # seconds between acquisition attempts
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +98,8 @@ class CorpusJob:
         answer_file: Filename of the consolidated answers CSV (under
             ``results_dir``) that new label/trend columns are merged into.
         dump_file: Path of the crash-safety JSONL dump accumulated during
-            batched inference (see :func:`predict_corpus`).
+            batched inference and removed once the labelled CSV is written
+            (see :func:`predict_corpus`).
         label_col: Output column name for the decoded label string
             (e.g. ``"down"``/``"neutral"``/``"up"``).
         trend_col: Output column name for the decoded trend encoding
@@ -120,6 +136,61 @@ class CorpusJob:
     family_suffix: str | None = None
 
 
+@contextmanager
+def _answers_lock(target: Path) -> Generator[None, None, None]:
+    """Hold ``<target>.lock/`` for the duration of the block.
+
+    A lock *directory*: ``mkdir`` is atomic on every filesystem this project
+    runs on, network mounts included, where ``fcntl`` locks are not reliable.
+    Waits :data:`ANSWERS_LOCK_POLL` seconds between attempts, breaks a lock
+    older than :data:`ANSWERS_LOCK_TIMEOUT` (its owner has died), and gives
+    up after the same timeout. Breaking a stale lock is not itself atomic:
+    two waiters that judge the same lock stale at the same instant can, in
+    a millisecond window, remove each other's fresh lock — an accepted
+    residual risk given it needs a crashed process *and* two simultaneous
+    waiters.
+
+    Args:
+        target: The answers file the lock guards.
+
+    Raises:
+        TimeoutError: the lock stayed held by a live process for longer than
+            :data:`ANSWERS_LOCK_TIMEOUT`.
+
+    Notes:
+        Creates and removes ``<target>.lock/`` (I/O); writes an ``owner``
+        file inside it naming the holder, for diagnosis only.
+    """
+    lock_dir = target.with_name(target.name + ".lock")
+    deadline = time.monotonic() + ANSWERS_LOCK_TIMEOUT
+    while True:
+        try:
+            lock_dir.mkdir()
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock_dir.stat().st_mtime
+            except FileNotFoundError:
+                continue  # released between our mkdir and stat: retry at once
+            if age > ANSWERS_LOCK_TIMEOUT:
+                logging.warning("Breaking stale answers lock `%s` (%.0f s old).", lock_dir, age)
+                rmtree(lock_dir, ignore_errors=True)
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Could not acquire the answers-file lock `{lock_dir}` within {ANSWERS_LOCK_TIMEOUT:.0f} s; "
+                    f"another labelling process is merging into `{target.name}`. This run's labelled CSV is "
+                    f"already saved, so re-run the merge once the lock is released."
+                ) from None
+            time.sleep(ANSWERS_LOCK_POLL)
+    try:
+        with suppress(OSError):  # diagnostics only; the lock is the directory itself
+            (lock_dir / "owner").write_text(f"pid={os.getpid()} since={now()}\n", encoding="utf-8")
+        yield
+    finally:
+        rmtree(lock_dir, ignore_errors=True)
+
+
 def update_answers(output_file: Path, df_labelled: DataFrame, job: CorpusJob) -> None:
     """Merge new label/trend columns into the consolidated answers CSV.
 
@@ -139,19 +210,35 @@ def update_answers(output_file: Path, df_labelled: DataFrame, job: CorpusJob) ->
 
     Raises:
         CorpusUnavailableError: the answers file to merge into does not exist.
+        TimeoutError: another process held the answers-file lock for longer
+            than :data:`ANSWERS_LOCK_TIMEOUT` (see :func:`_answers_lock`).
 
     Notes:
-        Reads and rewrites the target CSV (I/O). The write is atomic: the
-        merged frame is written to a sibling ``.tmp`` file and moved into
-        place with ``os.replace``, so a crash mid-write cannot corrupt the
-        previously accumulated answers file.
+        Reads and rewrites the target CSV (I/O) under ``<target>.lock/``, so
+        concurrent ``reddit`` processes labelling different models of the
+        same family serialise their merges instead of overwriting each
+        other's columns. The write is atomic: the merged frame is written
+        to a sibling ``.tmp`` file and moved into place with ``os.replace``,
+        so a crash mid-write cannot corrupt the previously accumulated
+        answers file.
     """
     if job.family_suffix:
         target = output_file.parent / f"{output_file.stem}_{job.family_suffix}{output_file.suffix}"
-        source = target if target.exists() else output_file
     else:
-        target = source = output_file
+        target = output_file
 
+    with _answers_lock(target):
+        _merge_into_answers(output_file, target, df_labelled, job)
+
+
+def _merge_into_answers(output_file: Path, target: Path, df_labelled: DataFrame, job: CorpusJob) -> None:
+    """The read-merge-write of :func:`update_answers`; call it holding the lock.
+
+    The source is resolved *inside* the lock: two first runs of a family
+    that both saw the per-family copy missing would otherwise both seed it
+    from the base file, and the second would overwrite the first.
+    """
+    source = target if target.exists() else output_file
     if not source.exists():
         raise CorpusUnavailableError(
             f"The consolidated answers file `{source}` does not exist. It is expected to "
@@ -204,8 +291,11 @@ def process_batch(
 
     Returns:
         One ``{job.label_col: <str>, job.trend_col: <int>}`` dict per input
-        text, in order, decoded via ``labels.id2label``/``labels.encodings``
-        (``"unknown"`` for any id absent from either mapping).
+        text, in order, decoded via ``labels.id2label``/``labels.encodings``.
+        An id absent from the mapping (a checkpoint with more heads than
+        declared labels) decodes to label ``"unknown"`` and trend ``None``,
+        so the trend column stays numeric rather than turning into a mixed
+        int/str object column.
 
     Notes:
         Runs under ``torch.inference_mode()``; no gradients are tracked.
@@ -229,7 +319,7 @@ def process_batch(
     results: list[dict[str, Any]] = []
     for idx in predicted_indices:
         label = id2label.get(int(idx), "unknown")
-        trend = encodings.get(label, "unknown")
+        trend = encodings.get(label)
         results.append({job.label_col: label, job.trend_col: trend})
     return results
 
@@ -308,8 +398,9 @@ def predict_corpus(model: Any, tokenizer: Any, config: Config, job: CorpusJob, *
         ``r/{subreddit}`` CSV skips only that subreddit, and a batch
         exception skips only that batch. Reads one corpus CSV per
         subreddit and writes/reloads ``job.dump_file`` (JSONL); the dump is
-        truncated at the start of the run and held open for its duration.
-        Delegates final persistence to :func:`_persist_labels`.
+        truncated at the start of the run, held open for its duration and
+        deleted once the labelled CSV is on disk. Delegates final
+        persistence to :func:`_persist_labels`.
     """
     device = _prepare_model_device(model, job)
 
@@ -402,7 +493,10 @@ def _persist_labels(config: Config, job: CorpusJob, *, log: LogFn) -> None:
     persists it in two independent, separately-guarded steps so a failure in
     the second (the answers-file merge) cannot discard the first (the
     standalone labelled CSV, the expensive artifact of the run): see
-    :func:`update_answers`.
+    :func:`update_answers`. The dump exists to survive a crash before the
+    labelled CSV is written; once that CSV is on disk it is deleted — one
+    full-corpus JSONL per model and method adds up on a shared mount. A
+    failed CSV write keeps it.
     """
     df_labelled = DataFrame()
     try:
@@ -423,6 +517,8 @@ def _persist_labels(config: Config, job: CorpusJob, *, log: LogFn) -> None:
         except Exception as e:
             log(f"Could not save the labelled output: {e}", level="error")
             logging.exception("Could not save the labelled output")
+        else:
+            job.dump_file.unlink(missing_ok=True)
 
         try:
             update_answers(config.paths.results_dir / job.answer_file, df_labelled, job)

@@ -11,10 +11,13 @@ from __future__ import annotations
 import dataclasses
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import torch
 from pandas import DataFrame
+from transformers import set_seed
 
 from reddit.core.config import Config, ModelSpec
 from reddit.core.errors import ConfigError
@@ -50,11 +53,28 @@ class ExplodingStrategy:
         return None
 
     def training_arguments(self, ctx: Any) -> Any:
-        # Resolved once by the preflight, before any seed; a stand-in is enough.
-        return None
+        # Resolved once by the preflight, before any seed; a stand-in carrying
+        # the fixed model-init/training seed is enough.
+        return SimpleNamespace(seed=42)
 
     def optimizers(self, ctx: Any, model: Any) -> tuple[Any, Any]:  # pragma: no cover - unreachable
         return None, None
+
+
+class InitProbeStrategy(ExplodingStrategy):
+    """Records the RNG state model initialisation would see, then fails."""
+
+    def __init__(self, fixed_seed: int = 42) -> None:
+        super().__init__("probe only")
+        self.fixed_seed = fixed_seed
+        self.draws: list[float] = []
+
+    def training_arguments(self, ctx: Any) -> Any:
+        return SimpleNamespace(seed=self.fixed_seed)
+
+    def build_model(self, ctx: Any, bundle: Any) -> tuple[Any, Any]:
+        self.draws.append(torch.rand(()).item())
+        return super().build_model(ctx, bundle)
 
 
 class MisconfiguredStrategy(ExplodingStrategy):
@@ -207,6 +227,31 @@ class TestLoopModule:
             assert results == {}
             assert strategy.build_calls == 0
             assert recording_log.messages_at("critical") == []
+
+        # ──────────────────────────────────────────────── seed protocol ──
+
+        def test_model_initialisation_is_seeded_identically_for_every_split(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            """The split is the run's only variable; init must not follow the split seed."""
+            strategy = InitProbeStrategy(fixed_seed=7)
+
+            run_seeds(seed_context, strategy)
+
+            set_seed(7)
+            expected = torch.rand(()).item()
+            assert strategy.draws == [expected] * len(seed_context.seeds)
+
+        def test_the_split_seed_never_reaches_model_initialisation(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            strategy = InitProbeStrategy(fixed_seed=7)
+
+            run_seeds(seed_context, strategy)
+
+            for split_seed in seed_context.seeds:
+                set_seed(split_seed)
+                assert torch.rand(()).item() not in strategy.draws
 
         # ─────────────────────────────────────────────── fatal failures ──
 

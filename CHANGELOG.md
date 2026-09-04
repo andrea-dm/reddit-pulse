@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `update_answers` serialises its read-merge-write through a lock
+  directory (`<answers>.lock/`, `mkdir`-atomic so it works on the CIFS
+  mount): two `reddit` processes labelling different models of the same
+  family — the documented way to split work across GPUs — could
+  previously overwrite each other's columns in the per-family answers
+  file, the second writer silently dropping the first one's
+  (`src/reddit/inference/corpus.py`).
+- `predict_corpus` deletes the crash-safety JSONL dump once the labelled
+  CSV is on disk (a failed CSV write keeps it); one full-corpus dump per
+  model and method was accumulating under `output_dir`.
+- `run_model` (LLM) reports a failed checkpoint archive as an error naming
+  the unzipped directory, instead of ignoring `archive_model`'s result;
+  `reddit predict` scans for `*.zip` only.
+- An out-of-range prediction now decodes to trend `None` rather than the
+  string `"unknown"`, keeping the trend column numeric.
+- `test_every_unknown_family_name_raises_a_config_error` no longer trips
+  Hypothesis's 200 ms deadline on a loaded box.
+
+### Changed
+
+- The seed protocol is now what the paper describes — the split is the
+  run's only variable. `training.arguments.seed` (pinned to `42` in
+  `config.yml` and `ArgumentsConfig`, previously the unpinned transformers
+  default) seeds both model initialisation and the Trainer's own
+  shuffling/dropout; `run_seeds` re-seeds from it right before building
+  the model, so PEFT-adapter and classification-head init no longer follow
+  the split seed (`src/reddit/training/loop.py`, `src/reddit/core/config.py`).
+
 ### Added
 
 - `reddit.modeling.loading.DeviceProfile` / `detect_device_profile`: the

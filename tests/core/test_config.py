@@ -439,6 +439,11 @@ class TestConfigModule:
             assert arguments.eval_strategy == "epoch"
             assert arguments.save_total_limit == 2
 
+        def test_the_fixed_seed_is_pinned_to_42(self) -> None:
+            """Explicit, so a transformers default change cannot alter the protocol."""
+            assert ArgumentsConfig().seed == 42
+            assert "seed" in ArgumentsConfig().model_dump()
+
         def test_an_unsupported_performance_metric_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 ArgumentsConfig(metric_for_best_model="auc")  # pyright: ignore[reportArgumentType]
@@ -633,6 +638,7 @@ class TestConfigModule:
 
             assert config.training.seeds == seeds
 
+        @settings(deadline=None)  # building a full Config per example trips the 200 ms deadline on a loaded box
         @given(name=st.text(min_size=1, max_size=12).filter(lambda s: s not in {"llm", "bert"}))
         def test_every_unknown_family_name_raises_a_config_error(self, name: str) -> None:
             config = Config(

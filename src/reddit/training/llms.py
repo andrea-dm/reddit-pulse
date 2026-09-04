@@ -307,8 +307,16 @@ def run_model(
 
     log("Cleaning up...")
     t1 = monotonic_ns()
-    if median_model is not None:
-        archive_model(median_model, str(median_model))
+    if median_model is not None and not archive_model(median_model, str(median_model)):
+        # The checkpoint itself is safe (a failed zip never deletes it), but
+        # `reddit predict` scans for `*.zip` archives only, so an unarchived
+        # directory is invisible to it until zipped by hand.
+        message = (
+            f"Selected checkpoint `{median_model.name}` could not be archived and is left unzipped at "
+            f"`{median_model}`; `reddit predict` will not find it until it is zipped by hand."
+        )
+        log(message, level="error")
+        logging.error(message)
     # Only the per-run training cache is dropped here. The downloaded weights
     # live under `hf_cache` and are shared by every fine-tuning method of this
     # model; `run_family` clears them once the last method has finished, which
