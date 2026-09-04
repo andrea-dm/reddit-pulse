@@ -140,6 +140,7 @@ class DatasetConfig(BaseModel):
     @field_validator("path")
     @classmethod
     def check_if_exists(cls, v: Any) -> Path:
+        """Expand and resolve the gold-file path, requiring an existing regular file."""
         p = _expand(v)
         if not p.exists():
             raise OSError(f"The file `{p}` does not exist.")
@@ -182,14 +183,17 @@ class LabelsConfig(BaseModel):
 
     @property
     def num_labels(self) -> int:
+        """Size of the classification head."""
         return len(self.labels)
 
     @property
     def id2label(self) -> dict[int, str]:
+        """Head id to label name — the ``transformers`` config convention."""
         return {v: k for k, v in self.labels.items()}
 
     @property
     def label2id(self) -> dict[str, int]:
+        """Label name to head id (a fresh copy; the config itself is frozen)."""
         return dict(self.labels)
 
     @property
@@ -265,6 +269,9 @@ class ArgumentsConfig(BaseModel):
     push_to_hub: bool = False
     disable_tqdm: bool = True
     # --- Performance --------------------------------------------------
+    # Mutually exclusive (see `_check_precision`); `bf16` additionally needs
+    # an Ampere-or-newer GPU, which `reddit.training.loop.run_seeds` checks
+    # against the detected device before any seed starts.
     bf16: bool = False
     fp16: bool = True
     per_device_train_batch_size: int = 64
@@ -278,6 +285,12 @@ class ArgumentsConfig(BaseModel):
     load_best_model_at_end: bool = True
     metric_for_best_model: PerformanceMetric = "f1_weighted"
     greater_is_better: bool = True
+
+    @model_validator(mode="after")
+    def _check_precision(self) -> ArgumentsConfig:
+        if self.bf16 and self.fp16:
+            raise ValueError("`training.arguments.bf16` and `training.arguments.fp16` are mutually exclusive")
+        return self
 
 
 class BertTrainingConfig(BaseModel):
@@ -447,19 +460,32 @@ def _resolve_relative_paths(raw: dict[str, Any], base: Path) -> dict[str, Any]:
 
 
 def load_config(path_to_config: str | Path) -> Config:
-    """Load and validate the unified project configuration.
+    r"""Load and validate the unified project configuration.
 
     Raises:
-        ConfigError: the file cannot be read, is not valid YAML, or fails
-            schema validation.  Pydantic's ``ValidationError`` and validator
-            ``OSError``\\ s are wrapped so callers (the CLI in particular) can
-            turn any user-fixable configuration problem into a usage message
-            with a single ``except ConfigError``.
+        ConfigError: the file cannot be read, is not valid YAML, is not a
+            mapping at the top level (empty file, bare list, scalar), or
+            fails schema validation.  Pydantic's ``ValidationError`` and
+            validator ``OSError``\ s are wrapped so callers (the CLI in
+            particular) can turn any user-fixable configuration problem into
+            a usage message with a single ``except ConfigError``.
     """
     path = _expand(path_to_config).resolve()
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = safe_load(f)
-        return Config.model_validate(_resolve_relative_paths(raw, path.parent))
-    except (OSError, YAMLError, ValidationError) as e:
+    except (OSError, YAMLError) as e:
+        raise ConfigError(f"Invalid configuration `{path}`: {e}") from e
+    # An empty file parses to `None` and a top-level list to `list`; both used
+    # to escape as a raw `AttributeError` from the path resolution below.
+    if not isinstance(raw, dict):
+        found = "nothing" if raw is None else f"a {type(raw).__name__}"
+        raise ConfigError(f"Invalid configuration `{path}`: expected a mapping at the top level, found {found}")
+    try:
+        # Rationale: yaml parsing yields untyped containers; the shape is
+        # validated by pydantic right after path resolution. Validators
+        # raise `OSError` for a missing gold file; pydantic passes it through
+        # untouched rather than wrapping it in a `ValidationError`.
+        return Config.model_validate(_resolve_relative_paths(cast("dict[str, Any]", raw), path.parent))
+    except (OSError, ValidationError) as e:
         raise ConfigError(f"Invalid configuration `{path}`: {e}") from e

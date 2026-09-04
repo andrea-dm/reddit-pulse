@@ -10,10 +10,14 @@ what keeps ``training`` free of any dependency on ``inference``.
 
 from __future__ import annotations
 
-from argparse import ArgumentParser, Namespace
+from typing import TYPE_CHECKING
 
-from reddit.core.config import Config
 from reddit.tasks.selection import add_selection_arguments, resolve_selection
+
+if TYPE_CHECKING:
+    from argparse import ArgumentParser, Namespace
+
+    from reddit.core.config import Config
 
 
 def setup_run(parser: ArgumentParser) -> None:
@@ -53,11 +57,22 @@ def execute_run(args: Namespace, config: Config) -> int:
         every selected family.
     """
     with_inference = not getattr(args, "no_inference", False)
+    selections = resolve_selection(args, config)
+
+    # Validate every LLM family's fine-tuning methods up front: a typo in the
+    # last of `--family a b c` used to surface only after `a` and `b` had
+    # trained for hours. Imported only now: the environment
+    # (CUDA_VISIBLE_DEVICES, HF_HOME) must be prepared before torch is imported.
+    if any(models.kind != "bert" for models in selections):
+        from reddit.training.llms import validate_methods
+
+        for models in selections:
+            if models.kind != "bert":
+                validate_methods(models)
 
     produced = 0
-    for models in resolve_selection(args, config):
-        # Import pipelines only now: the environment (CUDA_VISIBLE_DEVICES,
-        # HF_HOME) must be prepared before torch is imported.
+    for models in selections:
+        # Import pipelines only now, for the same reason as above.
         if models.kind == "bert":
             from reddit.inference.bert import label_corpus
             from reddit.training.bert import run_family

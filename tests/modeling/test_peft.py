@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from reddit.core.config import FineTuningMethod
-from reddit.modeling.peft import peft_config, quantization_config, target_modules
+from reddit.modeling.peft import build_quantization_config, peft_config, target_modules
 
 DECLARABLE_METHODS = set(typing.get_args(FineTuningMethod.__value__))
 
@@ -23,14 +23,24 @@ class TestPeftModule:
     @pytest.mark.unit
     class TestUnits:
         def test_weights_are_quantized_to_four_bit_nf4(self) -> None:
+            quantization_config = build_quantization_config()
+
             assert quantization_config.load_in_4bit is True
             assert quantization_config.bnb_4bit_quant_type == "nf4"
 
         def test_double_quantization_is_enabled(self) -> None:
-            assert quantization_config.bnb_4bit_use_double_quant is True
+            assert build_quantization_config().bnb_4bit_use_double_quant is True
 
-        def test_the_compute_dtype_is_half_precision(self) -> None:
-            assert quantization_config.bnb_4bit_compute_dtype is torch.float16
+        def test_the_compute_dtype_defaults_to_fp16(self) -> None:
+            assert build_quantization_config().bnb_4bit_compute_dtype is torch.float16
+
+        @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+        def test_the_compute_dtype_follows_the_caller(self, dtype: torch.dtype) -> None:
+            assert build_quantization_config(compute_dtype=dtype).bnb_4bit_compute_dtype is dtype
+
+        def test_every_call_builds_a_fresh_configuration(self) -> None:
+            """A shared instance would let one model load mutate the next one's config."""
+            assert build_quantization_config() is not build_quantization_config()
 
         def test_only_the_attention_projections_are_adapted(self) -> None:
             assert target_modules == ["q_proj", "k_proj", "v_proj", "o_proj"]

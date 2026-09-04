@@ -25,7 +25,6 @@ sequenceDiagram
     Main->>Main: setup_logging(log_file=...)
     Main->>Env: prepare_environment(config, gpu="0")
     Note over Env: CUDA_VISIBLE_DEVICES, HF_HOME,<br/>PYTORCH_CUDA_ALLOC_CONF, HF_TOKEN
-    Main->>Main: multiprocessing.set_start_method("spawn")
     Main->>Task: args.func(args, config)
     Task-->>Main: int (checkpoints produced)
     Main-->>User: exit 0 / 1 / parser.error(...)

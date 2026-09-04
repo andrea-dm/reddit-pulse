@@ -123,9 +123,10 @@ class TestUtilsModule:
             model_dir.mkdir()
             (model_dir / "adapter.bin").write_bytes(b"weights")
 
-            archive_model(model_dir, str(model_dir))
+            archived = archive_model(model_dir, str(model_dir))
 
             archive = tmp_path / "gemma2_9b_qdora_42.zip"
+            assert archived is True
             assert archive.is_file()
             assert not model_dir.exists()
             with zipfile.ZipFile(archive) as zf:
@@ -146,10 +147,31 @@ class TestUtilsModule:
             missing = tmp_path / "never_trained"
 
             with caplog.at_level(logging.WARNING):
-                archive_model(missing, str(tmp_path / "out"))
+                archived = archive_model(missing, str(tmp_path / "out"))
 
+            assert archived is False
             assert "Could not zip the dumped model" in caplog.text
             assert not (tmp_path / "out.zip").exists()
+
+        def test_a_failed_archive_never_deletes_the_checkpoint(
+            self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        ) -> None:
+            """Previously the directory was removed even when zipping had failed."""
+            model_dir = tmp_path / "gemma2_9b_qdora_42"
+            model_dir.mkdir()
+            (model_dir / "adapter.bin").write_bytes(b"weights")
+
+            def refuse(*args: object, **kwargs: object) -> str:
+                raise OSError("disk full")
+
+            monkeypatch.setattr("reddit.core.utils.make_archive", refuse)
+
+            with caplog.at_level(logging.WARNING):
+                archived = archive_model(model_dir, str(model_dir))
+
+            assert archived is False
+            assert (model_dir / "adapter.bin").read_bytes() == b"weights"
+            assert not (tmp_path / "gemma2_9b_qdora_42.zip").exists()
 
         # ──────────────────────────────────────────────────── clear_hf_cache ──
 

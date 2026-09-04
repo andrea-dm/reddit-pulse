@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import torch
 from transformers import (
@@ -47,6 +48,7 @@ class WeightedLossTrainer(Trainer):
         else:
             self.class_weights = None
 
+    @override
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs) -> Any:
         """Compute class-weighted cross-entropy loss, gradient-accumulation-safe.
 
@@ -91,13 +93,12 @@ class WeightedLossTrainer(Trainer):
             # mean over-weighted small trailing batches.
             gas = getattr(self, "current_gradient_accumulation_steps", self.args.gradient_accumulation_steps)
             loss = loss * gas / num_items_in_batch
+        # Evaluation/prediction path: reproduce reduction="mean" exactly
+        # (weighted mean normalizes by the summed class weights).
+        elif self.class_weights is not None:
+            loss = loss / self.class_weights[flat_labels].sum()
         else:
-            # Evaluation/prediction path: reproduce reduction="mean" exactly
-            # (weighted mean normalizes by the summed class weights).
-            if self.class_weights is not None:
-                loss = loss / self.class_weights[flat_labels].sum()
-            else:
-                loss = loss / flat_labels.numel()
+            loss = loss / flat_labels.numel()
 
         return (loss, outputs) if return_outputs else loss
 
@@ -130,6 +131,7 @@ class LogMetricsCallback(TrainerCallback):
             "finetuning_method": finetuning_method,
         }
 
+    @override
     def on_log(  # pyright: ignore[reportIncompatibleMethodOverride] - base method is untyped
         self,
         args: TrainingArguments,
@@ -154,9 +156,11 @@ class LogMetricsCallback(TrainerCallback):
             Appends to ``self.log_path`` (I/O) only when ``logs`` contains
             ``"eval_loss"`` and this is the main process
             (``state.is_world_process_zero``); other logging events are
-            ignored. Errors writing the file are caught and printed rather
-            than raised, so a logging failure cannot abort training.
+            ignored. Errors writing the file are caught and logged as
+            warnings rather than raised, so a logging failure cannot abort
+            training.
         """
+        del args, kwargs  # positional/keyword parity with the base signature only
         # only evaluation logs (they contain 'eval_loss'), only from the main process
         if logs is not None and "eval_loss" in logs and state.is_world_process_zero:
             metrics: dict[str, object] = {
@@ -171,5 +175,5 @@ class LogMetricsCallback(TrainerCallback):
                 with open(self.log_path, "ab") as f:
                     f.write(dump_object(metrics))
             except Exception as e:
-                print(f"Error writing to log file: {e}")
+                logging.warning("Error writing to log file `%s`: %s", self.log_path, e, exc_info=True)
         return control

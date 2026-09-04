@@ -85,7 +85,7 @@ class TestConfigModule:
 
         def test_every_section_is_frozen(self, project_config: Config) -> None:
             with pytest.raises(ValidationError):
-                project_config.training.seeds = []  # pyright: ignore[reportAttributeAccessIssue]
+                project_config.training.seeds = []
 
         @pytest.mark.parametrize(
             ("section", "field", "value"),
@@ -296,7 +296,7 @@ class TestConfigModule:
             models = config.family("llm_family")
 
             with pytest.raises(ValidationError):
-                models.family = "other"  # pyright: ignore[reportAttributeAccessIssue]
+                models.family = "other"
 
         def test_unknown_family_raises_unknown_family_error(self, config: Config) -> None:
             with pytest.raises(UnknownFamilyError):
@@ -446,6 +446,28 @@ class TestConfigModule:
         def test_an_unsupported_evaluation_strategy_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 ArgumentsConfig(eval_strategy="batch")  # pyright: ignore[reportArgumentType]
+
+        def test_bf16_and_fp16_cannot_both_be_enabled(self) -> None:
+            """Two independent booleans made the illegal state representable."""
+            with pytest.raises(ValidationError, match="mutually exclusive"):
+                ArgumentsConfig(bf16=True, fp16=True)
+
+        @pytest.mark.parametrize(("bf16", "fp16"), [(True, False), (False, True), (False, False)])
+        def test_any_other_precision_combination_is_accepted(self, bf16: bool, fp16: bool) -> None:
+            arguments = ArgumentsConfig(bf16=bf16, fp16=fp16)
+
+            assert (arguments.bf16, arguments.fp16) == (bf16, fp16)
+
+        @pytest.mark.parametrize(("content", "found"), [("", "nothing"), ("- a\n- b\n", "a list"), ("42\n", "a int")])
+        def test_a_config_that_is_not_a_mapping_is_a_config_error(
+            self, tmp_path: Path, content: str, found: str
+        ) -> None:
+            """Previously escaped as a raw ``AttributeError`` from the path resolution."""
+            config_path = tmp_path / "config.yml"
+            config_path.write_text(content, encoding="utf-8")
+
+            with pytest.raises(ConfigError, match=f"expected a mapping at the top level, found {found}"):
+                load_config(config_path)
 
         def test_unknown_finetuning_method_is_rejected(self) -> None:
             with pytest.raises(ValidationError):

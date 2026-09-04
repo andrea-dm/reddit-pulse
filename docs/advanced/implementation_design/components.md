@@ -39,13 +39,15 @@ Depends on `core` only.
 
 Depends on `core` only.
 
-- `modeling.peft` — `quantization_config` (4-bit NF4 `BitsAndBytesConfig`)
-  and `peft_config` (the `"qdora"`/`"xqdora"` `LoraConfig` registry — QDoRA+
+- `modeling.peft` — `build_quantization_config` (4-bit NF4
+  `BitsAndBytesConfig`, parameterized by the compute dtype) and
+  `peft_config` (the `"qdora"`/`"xqdora"` `LoraConfig` registry — QDoRA+
   and xQDoRA+).
-- `modeling.loading` — `llm_model_args`/`bert_model_args`: the single
-  owner of *how* a checkpoint is materialized (dtype, quantization,
-  attention implementation), shared by training and inference so the two
-  cannot drift.
+- `modeling.loading` — `DeviceProfile`/`detect_device_profile` plus
+  `llm_model_args`/`bert_model_args`: the single owner of *how* a
+  checkpoint is materialized (dtype, quantization, attention
+  implementation), resolved against the visible GPU and shared by
+  training and inference so the two cannot drift.
 - `modeling.metrics` — `compute_metrics`: accuracy, weighted/macro F1,
   macro recall/precision, macro one-vs-rest ROC-AUC.
 - `modeling.trainer` — `WeightedLossTrainer` (class-weighted,

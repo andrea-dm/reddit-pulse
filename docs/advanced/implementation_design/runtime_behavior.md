@@ -4,12 +4,11 @@
 
 `reddit` is a single-process, single-GPU-context-at-a-time CLI invocation
 — there is no daemon, no server, and (in this package's own code) no
-worker-pool concurrency. `reddit.cli.main` calls
-`multiprocessing.set_start_method("spawn", force=True)` defensively (CUDA
-requires `spawn`, not `fork`) but the pipelines do not themselves spawn
-subprocesses. Parallelism across GPUs is achieved externally, by launching
-one `reddit` process per GPU against a `*_part1`/`*_part2`-style family
-split (see `config.yml`) or a disjoint `--family` selection.
+worker-pool concurrency: the pipelines do not spawn subprocesses (the only
+child processes are the `DataLoader` workers `transformers.Trainer` forks,
+which never touch CUDA). Parallelism across GPUs is achieved externally,
+by launching one `reddit` process per GPU against a disjoint `--model`
+subset (see `config.yml`).
 
 ## Multi-seed training lifecycle
 
