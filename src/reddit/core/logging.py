@@ -13,6 +13,14 @@ from pandas import Timestamp
 
 type LogLevel = Literal["", "debug", "info", "success", "warning", "warn", "error", "critical", "fail", "failure"]
 
+# `httpx`/`httpcore` (transitively used by `huggingface_hub` for every Hub
+# request) log one INFO-level line per request — a `HEAD`/`GET` per cache
+# check and download. At the root logger's DEBUG level that flooded both the
+# console and the per-run log file with noise indistinguishable from this
+# project's own progress lines. Raised to WARNING so an actual connection
+# problem (a non-2xx the caller does not otherwise report) still surfaces.
+_NOISY_THIRD_PARTY_LOGGERS: tuple[str, ...] = ("httpx", "httpcore")
+
 
 class MicrosecondFormatter(logging.Formatter):
     """Formatter that supports %f (microseconds) in datefmt."""
@@ -48,13 +56,18 @@ def setup_logging(log_level: int = logging.INFO, log_file: str | Path = "run.log
         Clears and replaces every handler on the root logger (global
         state), so calling this twice discards the previous configuration
         rather than layering handlers. Creates ``log_file`` and its parent
-        directories on disk (I/O).
+        directories on disk (I/O). Also raises
+        :data:`_NOISY_THIRD_PARTY_LOGGERS` to ``WARNING`` (global state,
+        same rationale).
     """
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
     if logger.hasHandlers():
         logger.handlers.clear()
+
+    for name in _NOISY_THIRD_PARTY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(log_level)
