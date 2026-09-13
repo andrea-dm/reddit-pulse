@@ -68,7 +68,12 @@ models = config.family("bert")  # resolved Models view for one family
 - **`dataset:`** — the gold Excel file and its text/label columns (see
   [Preparing the Gold Dataset](preparing-the-gold-dataset.md)).
 - **`training:`** — shared and per-kind (`bert:`) hyperparameters, seeds,
-  and default `finetuning_methods`.
+  default `finetuning_methods`, and `gradient_checkpointing` (decoder LLMs
+  only; a memory-only trade, off in the shipped `config.yml` because the
+  sub-3B cohort fits an 80 GB A100 without it — turn it on for the 9B/27B
+  models on a small card). `training.arguments` is splatted verbatim into
+  `transformers.TrainingArguments`; on the A100 target it selects `bf16`
+  mixed precision, matching the dtype the LLMs are loaded in.
 - Every section is strict: a key the schema does not declare (a typo, or a
   `TrainingArguments` field not listed in `ArgumentsConfig`) fails
   `load_config` with a `ConfigError` instead of being silently ignored.

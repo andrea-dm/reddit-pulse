@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `config.yml` now selects `bf16` mixed precision (was `fp16`): the A100
+  target loads and de-quantizes the decoder LLMs in bfloat16
+  (`reddit.modeling.loading`), fp16 autocast on top needed a `GradScaler`
+  and is the precision Gemma-2 is known to overflow in. Gradient
+  checkpointing is off and `dataloader_num_workers` is `0` for the sub-3B
+  cohort: 16 micro-batches of short titles per epoch neither need
+  activation recomputation on an 80 GB card nor amortise a worker pool
+  forked every epoch. `llama3.2_1b` is declared again.
 - The seed protocol is now what the paper describes — the split is the
   run's only variable. `training.arguments.seed` (pinned to `42` in
   `config.yml` and `ArgumentsConfig`, previously the unpinned transformers

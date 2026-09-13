@@ -48,6 +48,10 @@ training:
   learning_rate: 1.0e-4
   num_train_epochs: 40
   gradient_accumulation_steps: 8
+  # Activation recomputation is a memory-only trade (no numerical effect,
+  # ~1/3 slower steps). Off for the sub-3B cohort on the 80 GB A100s; turn
+  # it back on for the 9B/27B models on a small card.
+  gradient_checkpointing: false
   early_stopping_patience: 5
   # Full fine-tuning hyperparameters for `kind: bert` families. These were
   # hardcoded in training/bert.py; the values are unchanged.
@@ -66,12 +70,20 @@ training:
     push_to_hub: false
     disable_tqdm: true
     # --- Performance ---
-    bf16: false
-    fp16: true            # mixed precision for faster training
+    # bf16 on the A100 target: matches the bfloat16 the decoder LLMs are
+    # loaded and de-quantized in (`reddit.modeling.loading`), needs no
+    # GradScaler, and Gemma-2 overflows under fp16 autocast. A Turing box
+    # (T4) has no native bf16: flip to `bf16: false` / `fp16: true` there
+    # (`run_seeds` refuses bf16 on such a device before any seed starts).
+    bf16: true
+    fp16: false
     per_device_train_batch_size: 64
     per_device_eval_batch_size: 64
     weight_decay: 0.01
-    dataloader_num_workers: 4
+    # One epoch is ~16 micro-batches of already-tokenized short titles;
+    # forking workers every epoch (and every evaluation) costs more than it
+    # saves.
+    dataloader_num_workers: 0
     dataloader_pin_memory: true
     # --- Strategy ---
     eval_strategy: epoch
@@ -124,7 +136,7 @@ families:
   llama:
     models:
       # - {name: llama3.1_8b, id: meta-llama/Llama-3.1-8B}
-      # - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
+      - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
       - {name: llama3.2_3b, id: meta-llama/Llama-3.2-3B}
   qwen:
     models:
