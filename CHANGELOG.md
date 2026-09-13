@@ -14,7 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config.yml`; the template defaults to `reddit-pulse-{slug}` after the
   hand-published `andreadm/reddit-pulse-bert`), staging the folder under
   `outputs/hub/` first (`--dry-run` stops there), then adds it to
-  `hub.collection`. The token comes from `HF_WRITE_TOKEN` in the dotenv
+  `hub.collection`. It refuses to start, dry run included, when a selected
+  model and method has more than one checkpoint in the scanned directory,
+  since both would publish to the same repository
+  (`reddit.tasks.upload.checkpoint_conflicts`, on top of
+  `reddit.inference.discovery.parse_archive_name`/`parse_dir_name`).
+  The token comes from `HF_WRITE_TOKEN` in the dotenv
   (`HF_TOKEN` as fallback). Each repository holds the weights, tokenizer
   and `config.json`, a generated model card in the layout of the reference
   card (front matter with `base_model`/`model-index`, a notice that the
