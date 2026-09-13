@@ -14,12 +14,45 @@ from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Collection, Generator, Iterable
 
 # `{model}_{method}_{seed}` (LLM archives) and `{model}_{seed}` (BERT
 # directories): the number of `_`-separated parts a valid checkpoint name has.
 LLM_ARCHIVE_PARTS = 3
 BERT_DIR_PARTS = 2
+
+
+def parse_archive_name(stem: str, methods: Collection[str]) -> tuple[str, str, int] | None:
+    """Split a ``{model}_{method}_{seed}`` archive stem into its parts.
+
+    Args:
+        stem: The archive filename without ``.zip``.
+        methods: Fine-tuning method tags to accept.
+
+    Returns:
+        ``(model_name, finetuning_method, seed)``, or ``None`` when the stem
+        does not match the pattern or names a method outside ``methods``.
+    """
+    parts = stem.rsplit("_", 2)
+    if len(parts) != LLM_ARCHIVE_PARTS or parts[1] not in methods or not parts[2].isdigit():
+        return None
+    return parts[0], parts[1], int(parts[2])
+
+
+def parse_dir_name(name: str) -> tuple[str, int] | None:
+    """Split a ``{model}_{seed}`` checkpoint directory name into its parts.
+
+    Args:
+        name: The directory name.
+
+    Returns:
+        ``(model_name, seed)``, or ``None`` when the name has no numeric
+        ``_{seed}`` suffix.
+    """
+    parts = name.rsplit("_", 1)
+    if len(parts) != BERT_DIR_PARTS or not parts[1].isdigit():
+        return None
+    return parts[0], int(parts[1])
 
 
 def iter_model_archives(
@@ -58,10 +91,10 @@ def iter_model_archives(
     logging.info("Scanning directory '%s' for model archives...", directory_path)
     for zip_path in sorted(parent_dir.glob("*.zip")):
         stem = zip_path.stem
-        parts = stem.rsplit("_", 2)
+        parsed = parse_archive_name(stem, methods)
 
-        if len(parts) == LLM_ARCHIVE_PARTS and parts[1] in methods and parts[2].isdigit():
-            model_name, finetuning_method, seed = parts
+        if parsed is not None:
+            model_name, finetuning_method, seed = parsed
             logging.info("Found model: `%s` trained on %s via %s", model_name, seed, finetuning_method)
             unzip_path = zip_path.parent / stem
             try:
@@ -99,9 +132,9 @@ def iter_model_dirs(directory_path: str | Path) -> Generator[tuple[str, str], No
     logging.info("Scanning directory `%s` for models...", directory_path)
     for item_path in sorted(parent_dir.iterdir()):
         if item_path.is_dir():
-            parts = item_path.name.rsplit("_", 1)
-            if len(parts) == BERT_DIR_PARTS and parts[1].isdigit():
-                model_name, seed = parts
+            parsed = parse_dir_name(item_path.name)
+            if parsed is not None:
+                model_name, seed = parsed
                 logging.info("Found model: `%s` trained on %s at %s", model_name, seed, item_path)
                 yield (model_name, str(item_path))
 

@@ -72,7 +72,9 @@ reddit upload  --model gemma2_2b    --dry-run       # stage Hub repos under outp
 `--family`/`--model` accept one or more values and pick from `families:` in
 `config.yml`; `--all-families` (alias `--all-models`) runs everything.
 `--gpu` sets `CUDA_VISIBLE_DEVICES` — split a cohort across GPUs by giving
-each invocation a disjoint `--model` subset.
+each invocation a disjoint `--model` subset, or let
+[`scripts/train_queue.sh`](scripts/train_queue.sh) queue the models by GPU
+memory (see [Fine-Tuning Decoder LLMs](docs/how_to/fine-tuning-decoder-llms.md)).
 
 ## Changelog
 
@@ -87,6 +89,8 @@ Each repository holds the weights (a PEFT adapter for the decoder LLMs), a
 model card with usage snippets, the per-seed evaluation tables and the
 training configuration that produced it.
 
+Decoder LLMs, fine-tuned with the two PEFT recipes:
+
 | Base model | QDoRA+ | xQDoRA+ |
 |---|---|---|
 | Gemma 2 2B | [`reddit-pulse-gemma2_2b-qdora`](https://huggingface.co/andreadm/reddit-pulse-gemma2_2b-qdora) | [`reddit-pulse-gemma2_2b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-gemma2_2b-xqdora) |
@@ -94,7 +98,10 @@ training configuration that produced it.
 | Llama 3.2 3B | [`reddit-pulse-llama3.2_3b-qdora`](https://huggingface.co/andreadm/reddit-pulse-llama3.2_3b-qdora) | [`reddit-pulse-llama3.2_3b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-llama3.2_3b-xqdora) |
 | Qwen2.5 0.5B | [`reddit-pulse-qwen2.5_0.5b-qdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_0.5b-qdora) | [`reddit-pulse-qwen2.5_0.5b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_0.5b-xqdora) |
 | Qwen2.5 1.5B | [`reddit-pulse-qwen2.5_1.5b-qdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_1.5b-qdora) | [`reddit-pulse-qwen2.5_1.5b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_1.5b-xqdora) |
-| InflaBERT (full fine-tune) | [`reddit-pulse-bert`](https://huggingface.co/andreadm/reddit-pulse-bert) | |
+
+The BERT-family encoder is fully fine-tuned instead, with no PEFT adapter:
+[`reddit-pulse-bert`](https://huggingface.co/andreadm/reddit-pulse-bert), from
+[InflaBERT](https://huggingface.co/MAPAi/InflaBERT).
 
 `reddit upload` stages and publishes these repositories; see
 [Publishing to the Hub](docs/how_to/publishing-to-the-hub.md).
@@ -134,4 +141,4 @@ If you use this code, please cite the paper it implements:
 
 ## License
 
-See [`LICENSE.md`](LICENSE.md).
+MIT; see [`LICENSE.md`](LICENSE.md). [`NOTICE.md`](NOTICE.md) states how the license relates to the paper.

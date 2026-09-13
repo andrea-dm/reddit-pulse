@@ -9,12 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/train_queue.sh`: trains a cohort as a memory-aware queue over
+  the local GPUs (one `reddit train` per model, largest measured footprint
+  first, each to the card with the most budget left, smaller jobs filling
+  the gaps as others exit), then publishes the selected checkpoints with one
+  `reddit upload` (`JOBS`, `GPUS`, `BUDGET_GB`, `COMMAND`, `UPLOAD`, `DRY`).
 - `reddit upload`: publishes selected checkpoints to the Hugging Face Hub,
   one repository per checkpoint (`hub.namespace` / `hub.repo_name` in
   `config.yml`; the template defaults to `reddit-pulse-{slug}` after the
   hand-published `andreadm/reddit-pulse-bert`), staging the folder under
   `outputs/hub/` first (`--dry-run` stops there), then adds it to
-  `hub.collection`. The token comes from `HF_WRITE_TOKEN` in the dotenv
+  `hub.collection`. It refuses to start, dry run included, when a selected
+  model and method has more than one checkpoint in the scanned directory,
+  since both would publish to the same repository
+  (`reddit.tasks.upload.checkpoint_conflicts`, on top of
+  `reddit.inference.discovery.parse_archive_name`/`parse_dir_name`).
+  The token comes from `HF_WRITE_TOKEN` in the dotenv
   (`HF_TOKEN` as fallback). Each repository holds the weights, tokenizer
   and `config.json`, a generated model card in the layout of the reference
   card (front matter with `base_model`/`model-index`, a notice that the
@@ -58,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `LICENSE.md` holds only the MIT license text, so GitHub detects the
+  license; the paper's disclaimer (the views are the authors', the license
+  covers the software only) moves to `NOTICE.md`, which ships in the
+  package's `license-files` and is included in the License docs page.
 - `config.yml` now selects `bf16` mixed precision (was `fp16`): the A100
   target loads and de-quantizes the decoder LLMs in bfloat16
   (`reddit.modeling.loading`), fp16 autocast on top needed a `GradScaler`

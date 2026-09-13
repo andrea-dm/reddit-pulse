@@ -253,8 +253,29 @@ def run_model(
 ) -> bool:
     """Train one model with one method, select the median seed, optionally label the corpus.
 
+    Args:
+        config: Project configuration.
+        models: The resolved family selection ``model`` belongs to.
+        model: The specific model spec (name + hub id) being fine-tuned.
+        finetuning_method: ``"qdora"`` or ``"xqdora"``.
+        log: Human-oriented progress logger for this run.
+        seeds: Split seeds to iterate over (see :class:`reddit.training.loop.SeedContext`).
+        labeller: Injected corpus-labelling step, run on the selected
+            checkpoint; ``None`` skips labelling.
+
     Returns:
         ``True`` when a median checkpoint was selected, ``False`` otherwise.
+
+    Notes:
+        Downloads/reads the base checkpoint from the Hugging Face Hub cache
+        and creates the per-run cache directory (I/O); archives the
+        selected checkpoint (:func:`reddit.core.utils.archive_model`) and
+        removes the per-run training cache at the end of the run, whether
+        or not a checkpoint was selected and whether or not labelling failed
+        (not in a ``finally`` block, so an exception that escapes earlier
+        leaves it on disk). The downloaded base weights under ``hf_cache``
+        are left for :func:`run_family` to clear once every method for this
+        model has run.
     """
     run_name = f"{model.name}_{finetuning_method}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 

@@ -53,6 +53,11 @@ Requirements:
   base repository and published alongside the weights, and the card's
   `license` field and License section follow the base model's declared
   license. Gemma keeps its terms on Google's page; the card links them.
+- One checkpoint per model and method in the scanned directory. Training
+  keeps only the median seed, so a second archive of the same model and
+  method is left over from an earlier run, and both would publish to the
+  same repository. `reddit upload` names them and refuses to start, dry
+  run included; move the stale one out of `models/` and run it again.
 
 ## What gets uploaded
 
@@ -80,7 +85,9 @@ also why `reddit predict` never does that.
 
 ```mermaid
 flowchart TD
-    A["reddit upload -m model"] --> B["tasks.upload.discover: models/*.zip or {model}_{seed}/"]
+    A["reddit upload -m model"] --> R["tasks.upload.checkpoint_conflicts: one checkpoint per repository"]
+    R -->|two for one repository| X["HubError: nothing staged"]
+    R --> B["tasks.upload.discover: models/*.zip or {model}_{seed}/"]
     B --> C["hub.evidence: seed metrics, config extract, training args"]
     C --> D["hub.card.render_model_card"]
     D --> E["hub.upload.stage_checkpoint: outputs/hub/{name}/"]

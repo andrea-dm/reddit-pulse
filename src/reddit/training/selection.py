@@ -44,6 +44,12 @@ def select_median(
     Returns:
         ``(model_path, model_config)`` of the selected checkpoint, or
         ``(None, None)`` when nothing usable was trained.
+
+    Notes:
+        Destructive: deletes every non-median seed's checkpoint directory
+        from disk (``shutil.rmtree``). Appends one JSONL record to
+        ``results_dir/selected_models_metrics.jsonl`` recording the choice
+        (I/O).
     """
     if not results:
         log("No model was trained. Skipping...", level="warning")

@@ -19,7 +19,7 @@ from reddit.core.config import Config
 from reddit.core.environment import bootstrap_directories
 from reddit.core.errors import ConfigError, HubError
 from reddit.tasks import upload as upload_task
-from reddit.tasks.upload import discover, execute_upload, setup_upload
+from reddit.tasks.upload import checkpoint_conflicts, discover, execute_upload, setup_upload
 
 
 class PublishRecorder:
@@ -153,6 +153,43 @@ class TestUploadTaskModule:
             with pytest.raises(HubError, match="write access"):
                 execute_upload(arguments(dry_run=False), hub_config)
             assert offline.calls == []
+
+        @pytest.mark.parametrize("dry_run", [True, False])
+        def test_two_checkpoints_for_one_repository_are_refused_before_anything_is_staged(
+            self,
+            hub_config: Config,
+            archives: Path,
+            offline: PublishRecorder,
+            monkeypatch: pytest.MonkeyPatch,
+            dry_run: bool,
+        ) -> None:
+            make_archive(archives, "tiny_llm_qdora_11")
+            monkeypatch.setenv("HF_WRITE_TOKEN", "hf_write")
+
+            with pytest.raises(HubError, match=r"tiny_llm qdora: tiny_llm_qdora_11\.zip, tiny_llm_qdora_22\.zip"):
+                execute_upload(arguments(directory=str(archives), dry_run=dry_run), hub_config)
+
+            assert offline.calls == []
+            assert list((hub_config.paths.output_dir / "hub").glob("*")) == []
+
+        def test_unselected_models_and_one_checkpoint_per_method_do_not_conflict(
+            self, hub_config: Config, archives: Path
+        ) -> None:
+            make_archive(archives, "other_model_qdora_55")
+
+            assert checkpoint_conflicts(hub_config.family("llm_family"), archives) == {}
+
+        def test_encoder_checkpoints_of_one_model_conflict_without_a_method(self, hub_config: Config) -> None:
+            directory = hub_config.paths.models_dir
+            for name in ("tiny_bert_11", "tiny_bert_12"):
+                (directory / name).mkdir()
+
+            assert checkpoint_conflicts(hub_config.family("bert_family"), directory) == {
+                ("tiny_bert", "-"): ["tiny_bert_11", "tiny_bert_12"]
+            }
+
+        def test_a_missing_directory_has_no_conflicts(self, hub_config: Config, tmp_path: Path) -> None:
+            assert checkpoint_conflicts(hub_config.family("llm_family"), tmp_path / "absent") == {}
 
         def test_a_missing_namespace_is_a_config_error(
             self, bootstrapped_config: Config, offline: PublishRecorder, archives_for: None

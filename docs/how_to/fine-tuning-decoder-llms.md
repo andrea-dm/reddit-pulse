@@ -28,6 +28,27 @@ keeps only the median-performing (by test weighted F1) checkpoint per
 method. `--model` picks the one model out of its family without touching
 its siblings; `--family gemma` would run all of `gemma`'s models instead.
 
+### Several models across GPUs
+
+`scripts/train_queue.sh` trains a cohort as a memory-aware queue. It runs
+one `reddit train` per model, never the two methods of one model side by
+side, because they share a Hugging Face cache that the last one to finish
+deletes. Models go largest measured GPU footprint first, each to the card
+with the most memory budget left, and smaller ones fill the gaps as jobs
+exit. Once every job has exited, one `reddit upload` publishes the selected
+checkpoints.
+
+```bash
+DRY=1 bash scripts/train_queue.sh                                      # print the first wave, launch nothing
+JOBS="qwen2.5_1.5b:33 qwen2.5_0.5b:17" UPLOAD=0 bash scripts/train_queue.sh
+```
+
+`JOBS` lists `<model>:<footprint GB>`; the default is the sub-3B cohort
+with the peaks measured on two A100 80GB cards (batch 64 × 1024 tokens,
+bf16), so measure again before queueing other models or hardware.
+`BUDGET_GB` (default 78) is the per-card budget, `GPUS` the cards to use,
+`COMMAND=run` also labels the corpus.
+
 ## Embedded usage
 
 ```python

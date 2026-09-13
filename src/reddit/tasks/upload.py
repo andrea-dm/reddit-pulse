@@ -152,6 +152,58 @@ def discover(models: Models, directory: str | Path) -> Iterator[Checkpoint]:
             yield Checkpoint(specs[name], method, _seed_of(Path(path)), Path(path))
 
 
+def checkpoint_conflicts(models: Models, directory: str | Path) -> dict[tuple[str, str], list[str]]:
+    """The selected ``(model, method)`` pairs that have more than one checkpoint under ``directory``.
+
+    Every checkpoint of a pair publishes to the same repository, so a second
+    one (an archive left behind by an earlier run: training itself keeps only
+    the median seed) would overwrite the first. Only names are read; nothing
+    is unzipped.
+
+    Args:
+        models: The resolved family selection.
+        directory: Directory holding the checkpoints.
+
+    Returns:
+        ``{(model, method): checkpoint file or folder names}`` for every pair
+        found more than once; ``method`` is ``"-"`` for BERT. Empty when
+        there is no conflict or the directory does not exist.
+    """
+    from reddit.inference.discovery import parse_archive_name, parse_dir_name  # noqa: PLC0415 — after env prep
+
+    parent = Path(directory)
+    if not parent.is_dir():
+        return {}
+    names = {m.name for m in models.models}
+    found: dict[tuple[str, str], list[str]] = {}
+    if models.kind == "bert":
+        for path in sorted(parent.iterdir()):
+            if path.is_dir() and (parsed := parse_dir_name(path.name)) and parsed[0] in names:
+                found.setdefault((parsed[0], "-"), []).append(path.name)
+    else:
+        methods = set(models.finetuning_methods)
+        for path in sorted(parent.glob("*.zip")):
+            if (parsed := parse_archive_name(path.stem, methods)) and parsed[0] in names:
+                found.setdefault((parsed[0], parsed[1]), []).append(path.name)
+    return {pair: checkpoints for pair, checkpoints in found.items() if len(checkpoints) > 1}
+
+
+def _refuse_conflicts(selection: list[Models], directory: str | Path) -> None:
+    """Raise before anything is staged when a repository would receive two checkpoints."""
+    conflicts = {pair: names for models in selection for pair, names in checkpoint_conflicts(models, directory).items()}
+    if not conflicts:
+        return
+    entries: list[str] = []
+    for (model, method), names in sorted(conflicts.items()):
+        label = model if method == "-" else f"{model} {method}"
+        entries.append(f"{label}: {', '.join(names)}")
+    raise HubError(
+        f"More than one checkpoint would publish to the same repository ({'; '.join(entries)}). Training keeps "
+        f"only the median seed, so the others are left over from earlier runs: move them out of `{directory}` "
+        "and retry."
+    )
+
+
 def _hyperparameters(config: Config, kind: ModelKind, method: str) -> tuple[tuple[str, str], ...]:
     """The ``(setting, value)`` rows of the card's procedure table."""
     # Both imports pull in torch; deferred for the same reason as `discover`.
@@ -363,8 +415,11 @@ def execute_upload(args: Namespace, config: Config) -> int:
         The number of checkpoints staged or published.
 
     Raises:
-        HubError: publishing was requested without a Hub token, or the Hub
-            rejected an upload. A failure to add a published repository to
+        HubError: publishing was requested without a Hub token, a selected
+            model and method has more than one checkpoint under
+            ``directory`` (see :func:`checkpoint_conflicts`; raised before
+            anything is staged, dry run included), or the Hub rejected an
+            upload. A failure to add a published repository to
             ``hub.collection`` is logged, not raised: the upload itself
             succeeded.
         ConfigError: ``hub.namespace`` is not set.
@@ -375,11 +430,13 @@ def execute_upload(args: Namespace, config: Config) -> int:
             "No Hugging Face token found: put a token with write access in the dotenv as HF_WRITE_TOKEN "
             "(HF_TOKEN is used as a fallback). Use --dry-run to stage without publishing."
         )
+    selection = resolve_selection(args, config)
+    _refuse_conflicts(selection, args.directory)
     private = config.hub.private if args.private is None else bool(args.private)
     gold_counts = _gold_counts(config)
 
     processed = 0
-    for models in resolve_selection(args, config):
+    for models in selection:
         for found in discover(models, args.directory):
             staging = stage(config, models, found, gold_counts=gold_counts, token=token)
             repo_id = config.hub.repo_id(found.model.name, found.method)

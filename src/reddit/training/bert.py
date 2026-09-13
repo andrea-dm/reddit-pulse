@@ -184,8 +184,25 @@ def train_model(
 ) -> bool:
     """Train one encoder over all seeds, select the median seed, optionally label the corpus.
 
+    Args:
+        config: Project configuration.
+        models: The resolved family selection ``model`` belongs to.
+        model: The specific model spec (name + hub id) being fine-tuned.
+        log: Human-oriented progress logger for this run.
+        seeds: Split seeds to iterate over (see :class:`reddit.training.loop.SeedContext`).
+        labeller: Injected corpus-labelling step, run on the selected
+            checkpoint; ``None`` skips labelling.
+
     Returns:
         ``True`` when a median checkpoint was selected, ``False`` otherwise.
+
+    Notes:
+        Downloads/reads the base checkpoint from the Hugging Face Hub cache
+        and creates the per-run cache directories (I/O); removes both
+        caches at the end of the run, whether or not a checkpoint was
+        selected and whether or not labelling failed. The removal is not in a
+        ``finally`` block: an exception that escapes before it leaves the
+        caches on disk.
     """
     log("Preparing...")
     t1 = monotonic_ns()
