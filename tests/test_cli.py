@@ -53,9 +53,14 @@ class TestCliModule:
     @pytest.fixture
     def patched_commands(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, FuncRecorder]:
         """Replace the subcommand implementations before the parser binds them."""
-        recorders = {"run": FuncRecorder(returns=1), "predict": FuncRecorder(returns=1)}
+        recorders = {
+            "run": FuncRecorder(returns=1),
+            "predict": FuncRecorder(returns=1),
+            "upload": FuncRecorder(returns=1),
+        }
         monkeypatch.setattr(cli, "execute_run", recorders["run"])
         monkeypatch.setattr(cli, "execute_predict", recorders["predict"])
+        monkeypatch.setattr(cli, "execute_upload", recorders["upload"])
         return recorders
 
     @pytest.mark.unit
@@ -74,7 +79,7 @@ class TestCliModule:
             with pytest.raises(SystemExit):
                 parser.parse_args(["evaluate"])
 
-        @pytest.mark.parametrize("command", ["run", "train", "predict"])
+        @pytest.mark.parametrize("command", ["run", "train", "predict", "upload"])
         def test_every_documented_subcommand_exists(self, command: str) -> None:
             argv = ["-f", "gemma"] + (["-d", "models"] if command == "predict" else [])
 
@@ -94,13 +99,19 @@ class TestCliModule:
             assert args.func is cli.execute_run
             assert args.no_inference is True
 
+        def test_upload_dispatches_to_the_hub_task(self) -> None:
+            args = cli.build_parser().parse_args(["upload", "-m", "gemma2_2b", "--dry-run"])
+
+            assert args.func is cli.execute_upload
+            assert (args.directory, args.dry_run) == ("models", True)
+
         def test_predict_dispatches_to_the_inference_task(self) -> None:
             args = cli.build_parser().parse_args(["predict", "-f", "bert", "-d", "models"])
 
             assert args.func is cli.execute_predict
             assert args.directory == "models"
 
-        @pytest.mark.parametrize("command", ["run", "train", "predict"])
+        @pytest.mark.parametrize("command", ["run", "train", "predict", "upload"])
         def test_the_common_arguments_are_available_everywhere(self, command: str) -> None:
             argv = ["-f", "gemma"] + (["-d", "models"] if command == "predict" else [])
 
@@ -109,7 +120,7 @@ class TestCliModule:
             assert args.config == "other.yml"
             assert args.gpu == "0,1"
 
-        @pytest.mark.parametrize("command", ["run", "train", "predict"])
+        @pytest.mark.parametrize("command", ["run", "train", "predict", "upload"])
         def test_the_common_arguments_default_to_unset(self, command: str) -> None:
             argv = ["-f", "gemma"] + (["-d", "models"] if command == "predict" else [])
 

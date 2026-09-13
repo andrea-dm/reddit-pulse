@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
@@ -147,11 +148,25 @@ class TestLlmsTrainingModule:
             assert arguments.output_dir == str(seed_context.cache_dir)
 
         def test_memory_saving_options_are_enabled_for_quantized_training(self, seed_context: SeedContext) -> None:
+            """The shipped default keeps reentrant checkpointing on, as the pipeline always did."""
             arguments = LlmSeedStrategy().training_arguments(seed_context)
 
+            assert seed_context.config.training.gradient_checkpointing is True
             assert arguments.gradient_checkpointing is True
             assert arguments.gradient_checkpointing_kwargs == {"use_reentrant": True}
             assert arguments.lr_scheduler_type == "cosine"
+
+        def test_gradient_checkpointing_can_be_switched_off_from_the_config(
+            self, seed_context: SeedContext, config_factory: Callable[..., Config], raw_config: dict[str, Any]
+        ) -> None:
+            """A memory-only trade the sub-3B cohort on an 80 GB card does not need."""
+            training = {**raw_config["training"], "gradient_checkpointing": False}
+            context = replace(seed_context, config=config_factory(training=training))
+
+            arguments = LlmSeedStrategy().training_arguments(context)
+
+            assert arguments.gradient_checkpointing is False
+            assert arguments.gradient_checkpointing_kwargs is None
 
         def test_the_pass_through_arguments_section_is_applied(self, seed_context: SeedContext) -> None:
             arguments = LlmSeedStrategy().training_arguments(seed_context)

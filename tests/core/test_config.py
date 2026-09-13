@@ -25,6 +25,7 @@ from reddit.core.config import (
     DatasetConfig,
     EnvironmentConfig,
     Family,
+    HubConfig,
     InferenceConfig,
     LabelsConfig,
     Models,
@@ -439,6 +440,9 @@ class TestConfigModule:
             assert arguments.eval_strategy == "epoch"
             assert arguments.save_total_limit == 2
 
+        def test_gradient_checkpointing_defaults_on_as_the_pipeline_always_had_it(self) -> None:
+            assert TrainingConfig(seeds=[1]).gradient_checkpointing is True
+
         def test_the_fixed_seed_is_pinned_to_42(self) -> None:
             """Explicit, so a transformers default change cannot alter the protocol."""
             assert ArgumentsConfig().seed == 42
@@ -490,6 +494,15 @@ class TestConfigModule:
 
             with pytest.raises(ConfigError, match=f"expected a mapping at the top level, found {found}"):
                 load_config(config_path)
+
+        def test_an_undeclared_key_is_rejected_rather_than_silently_dropped(
+            self, config_factory: Callable[..., Config], raw_config: dict[str, Any]
+        ) -> None:
+            """`gradient_checkpointing` under `training.arguments` used to be accepted and ignored."""
+            arguments = {**raw_config["training"]["arguments"], "gradient_checkpointing": False}
+
+            with pytest.raises(ConfigError, match="gradient_checkpointing"):
+                config_factory(training={**raw_config["training"], "arguments": arguments})
 
         def test_unknown_finetuning_method_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
@@ -671,3 +684,32 @@ class TestConfigModule:
 
             with pytest.raises(ConfigError):
                 config.family(name)
+
+
+class TestHubConfig:
+    """Repository naming for `reddit upload`."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_the_default_template_joins_model_and_method(self) -> None:
+            assert (
+                HubConfig(namespace="acme").repo_id("qwen2.5_0.5b", "qdora") == "acme/reddit-pulse-qwen2.5_0.5b-qdora"
+            )
+
+        def test_an_encoder_has_no_method_in_its_name(self) -> None:
+            assert HubConfig(namespace="acme").repo_id("inflabert", "-") == "acme/reddit-pulse-inflabert"
+
+        def test_the_template_can_use_model_and_method_separately(self) -> None:
+            hub = HubConfig(namespace="acme", repo_name="{method}--{model}")
+
+            assert hub.repo_id("gemma2_2b", "xqdora") == "acme/xqdora--gemma2_2b"
+
+        def test_without_a_namespace_naming_is_a_config_error(self) -> None:
+            with pytest.raises(ConfigError, match=r"hub\.namespace"):
+                HubConfig().repo_id("gemma2_2b", "qdora")
+
+        def test_repositories_are_private_by_default(self) -> None:
+            assert HubConfig().private is True
+
+        def test_no_collection_is_configured_by_default(self) -> None:
+            assert HubConfig().collection is None

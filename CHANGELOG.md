@@ -7,50 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- `setup_logging` raises `httpx`/`httpcore` (transitively used by
-  `huggingface_hub` for every Hub request) to `WARNING`: one INFO-level
-  line per `HEAD`/`GET` request was flooding both the console and the
-  per-run log file, indistinguishable from this project's own progress
-  lines (`src/reddit/core/logging.py`).
-- `training.arguments.report_to` defaults to `"none"` and a YAML `null` is
-  coerced to it: transformers 5 wraps `None` as `[None]` and the Trainer
-  then rejected it as an unknown integration on every seed, so a `reddit
-  run` trained nothing. `run_seeds` now also validates the reporting
-  integrations once in its preflight, so an unknown tracker is a single
-  `ConfigError` rather than N swallowed per-seed failures
-  (`src/reddit/core/config.py`, `src/reddit/training/loop.py`, `config.yml`).
-- `update_answers` serialises its read-merge-write through a lock
-  directory (`<answers>.lock/`, `mkdir`-atomic so it works on the CIFS
-  mount): two `reddit` processes labelling different models of the same
-  family — the documented way to split work across GPUs — could
-  previously overwrite each other's columns in the per-family answers
-  file, the second writer silently dropping the first one's
-  (`src/reddit/inference/corpus.py`).
-- `predict_corpus` deletes the crash-safety JSONL dump once the labelled
-  CSV is on disk (a failed CSV write keeps it); one full-corpus dump per
-  model and method was accumulating under `output_dir`.
-- `run_model` (LLM) reports a failed checkpoint archive as an error naming
-  the unzipped directory, instead of ignoring `archive_model`'s result;
-  `reddit predict` scans for `*.zip` only.
-- An out-of-range prediction now decodes to trend `None` rather than the
-  string `"unknown"`, keeping the trend column numeric.
-- `test_every_unknown_family_name_raises_a_config_error` no longer trips
-  Hypothesis's 200 ms deadline on a loaded box.
-
-### Changed
-
-- The seed protocol is now what the paper describes — the split is the
-  run's only variable. `training.arguments.seed` (pinned to `42` in
-  `config.yml` and `ArgumentsConfig`, previously the unpinned transformers
-  default) seeds both model initialisation and the Trainer's own
-  shuffling/dropout; `run_seeds` re-seeds from it right before building
-  the model, so PEFT-adapter and classification-head init no longer follow
-  the split seed (`src/reddit/training/loop.py`, `src/reddit/core/config.py`).
-
 ### Added
 
+- `reddit upload`: publishes selected checkpoints to the Hugging Face Hub,
+  one repository per checkpoint (`hub.namespace` / `hub.repo_name` in
+  `config.yml`; the template defaults to `reddit-pulse-{slug}` after the
+  hand-published `andreadm/reddit-pulse-bert`), staging the folder under
+  `outputs/hub/` first (`--dry-run` stops there), then adds it to
+  `hub.collection`. The token comes from `HF_WRITE_TOKEN` in the dotenv
+  (`HF_TOKEN` as fallback). Each repository holds the weights, tokenizer
+  and `config.json`, a generated model card in the layout of the reference
+  card (front matter with `base_model`/`model-index`, a notice that the
+  checkpoint was retrained and its metrics may differ from the paper's,
+  labels, usage snippet, seed protocol, hyperparameters, per-seed
+  evaluation, corpus label shares when the checkpoint labelled the corpus,
+  files, reproducing,
+  dual citation, license), `training_args.json` (local paths removed), a
+  `training_config.yml` extract, `evaluation/*.csv` and the base model's
+  own `LICENSE*`/`USE_POLICY*` files (`src/reddit/hub/`,
+  `src/reddit/tasks/upload.py`, `src/reddit/cli.py`).
+- `reddit.core.utils.read_jsonl`: parses JSONL dumps whether or not their
+  records are newline-terminated (the 2025 dumps glued records together).
+- `reddit.modeling.loading.adapter_base_model` and
+  `reddit.data.preparation.label_counts`.
+- `training.gradient_checkpointing` (default `true`, the previous
+  hardcoded behaviour): reentrant activation checkpointing for decoder-LLM
+  training, applied consistently to `peft.prepare_model_for_kbit_training`
+  and `TrainingArguments` — the Trainer only ever switches checkpointing
+  on, so the knob has to reach both (`src/reddit/core/config.py`,
+  `src/reddit/training/llms.py`, `config.yml`).
 - `reddit.modeling.loading.DeviceProfile` / `detect_device_profile`: the
   model-loading policy is now resolved against the visible GPU. Decoder
   LLMs load in `bfloat16` with flash-attention 2 on Ampere-or-newer
@@ -73,6 +58,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `config.yml` now selects `bf16` mixed precision (was `fp16`): the A100
+  target loads and de-quantizes the decoder LLMs in bfloat16
+  (`reddit.modeling.loading`), fp16 autocast on top needed a `GradScaler`
+  and is the precision Gemma-2 is known to overflow in. Gradient
+  checkpointing is off and `dataloader_num_workers` is `0` for the sub-3B
+  cohort: 16 micro-batches of short titles per epoch neither need
+  activation recomputation on an 80 GB card nor amortise a worker pool
+  forked every epoch. `llama3.2_1b` is declared again.
+- The seed protocol is now what the paper describes — the split is the
+  run's only variable. `training.arguments.seed` (pinned to `42` in
+  `config.yml` and `ArgumentsConfig`, previously the unpinned transformers
+  default) seeds both model initialisation and the Trainer's own
+  shuffling/dropout; `run_seeds` re-seeds from it right before building
+  the model, so PEFT-adapter and classification-head init no longer follow
+  the split seed (`src/reddit/training/loop.py`, `src/reddit/core/config.py`).
 - Lint and type gates hardened to the `carbon_pledges` sibling project's
   policy: ruff now runs the SonarLint-parity families (`ARG`, `DTZ`, `ERA`,
   `FURB`, `G`, `N`, `PERF`, `PGH`, `S`, `SLF`, `T20`, `TC`, `TRY`, `UP`, ...),
@@ -115,6 +115,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Corpus labelling reloaded PEFT checkpoints through transformers' adapter
+  shortcut (`AutoModelForSequenceClassification.from_pretrained(<adapter
+  dir>)`), which on transformers 5 rebuilds the DoRA adapter into a model
+  whose logits differ from the trained one by up to 17 on the same titles
+  (predictions flipped). `reddit.inference.llms.load_classifier` now
+  reloads the 4-bit base model and applies `PeftModel.from_pretrained` on
+  top, reproducing the Trainer's model; the base weights are read from the
+  per-model cache the training stage already filled
+  (`src/reddit/inference/llms.py`).
+- PEFT checkpoints now carry `config.json` (head size, label names, pad
+  token): `Trainer.save_model` on a `PeftModel` writes the adapter only,
+  which left `reddit predict` unable to rebuild the model config
+  (`AutoConfig` rejected the directory) and a Hub user unable to reload
+  the adapter without re-deriving all three (`src/reddit/training/loop.py`).
+  The saved config drops the `quantization_config` block the 4-bit load
+  left on it (`reddit.modeling.loading.strip_quantization`): fed back into
+  `from_pretrained` next to an explicit 4-bit request it made transformers
+  treat the base weights as pre-quantized and PEFT could not attach the
+  adapter. `_predict_one` falls back to the base model's config for older
+  archives.
+- `--model qwen2.5_0.5b` was rejected as ambiguous: the smoke-test `test`
+  family declared the same model name as the `qwen` family. The smoke
+  model is now `qwen2.5_0.5b_smoke` (same checkpoint), so its artefacts
+  also stop mixing with a real run's (`config.yml`).
+- `config.yml` keys the schema does not declare are rejected at load time
+  (`extra="forbid"` on every section) instead of silently dropped: a
+  `gradient_checkpointing: false` under `training.arguments` used to be
+  accepted and ignored (`src/reddit/core/config.py`).
+- `setup_logging` raises `httpx`/`httpcore` (transitively used by
+  `huggingface_hub` for every Hub request) to `WARNING`: one INFO-level
+  line per `HEAD`/`GET` request was flooding both the console and the
+  per-run log file, indistinguishable from this project's own progress
+  lines (`src/reddit/core/logging.py`).
+- `training.arguments.report_to` defaults to `"none"` and a YAML `null` is
+  coerced to it: transformers 5 wraps `None` as `[None]` and the Trainer
+  then rejected it as an unknown integration on every seed, so a `reddit
+  run` trained nothing. `run_seeds` now also validates the reporting
+  integrations once in its preflight, so an unknown tracker is a single
+  `ConfigError` rather than N swallowed per-seed failures
+  (`src/reddit/core/config.py`, `src/reddit/training/loop.py`, `config.yml`).
+- `update_answers` serialises its read-merge-write through a lock
+  directory (`<answers>.lock/`, `mkdir`-atomic so it works on the CIFS
+  mount): two `reddit` processes labelling different models of the same
+  family — the documented way to split work across GPUs — could
+  previously overwrite each other's columns in the per-family answers
+  file, the second writer silently dropping the first one's
+  (`src/reddit/inference/corpus.py`).
+- `predict_corpus` deletes the crash-safety JSONL dump once the labelled
+  CSV is on disk (a failed CSV write keeps it); one full-corpus dump per
+  model and method was accumulating under `output_dir`.
+- `run_model` (LLM) reports a failed checkpoint archive as an error naming
+  the unzipped directory, instead of ignoring `archive_model`'s result;
+  `reddit predict` scans for `*.zip` only.
+- An out-of-range prediction now decodes to trend `None` rather than the
+  string `"unknown"`, keeping the trend column numeric.
+- `test_every_unknown_family_name_raises_a_config_error` no longer trips
+  Hypothesis's 200 ms deadline on a loaded box.
 - Decoder-LLM training now truncates at `LLM_MAX_LENGTH` (1024 tokens),
   matching inference; the length was previously parked in the tokenizer's
   `init_kwargs` and never applied, so training truncated at the model's

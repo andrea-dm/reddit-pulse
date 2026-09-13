@@ -52,6 +52,26 @@ class DataBundle:
     label2id: dict[str, int]
 
 
+def label_counts(data_file_path: str | Path, text_column: str, label_column: str) -> dict[str, int]:
+    """Count the gold dataset's rows per (lower-cased) label, after the cleaning training applies.
+
+    Args:
+        data_file_path: Path to the hand-labelled gold Excel file.
+        text_column: Column holding the submission text.
+        label_column: Column holding the directional label.
+
+    Returns:
+        ``{label: rows}``, most frequent first — the same rows
+        :func:`load_and_prepare_data` splits (missing text or label dropped).
+
+    Notes:
+        Reads ``data_file_path`` from disk (I/O) via ``pandas.read_excel``.
+    """
+    df = read_excel(data_file_path).dropna(subset=[text_column, label_column])
+    counts = df[label_column].str.lower().value_counts()
+    return {str(label): int(count) for label, count in counts.items()}
+
+
 def load_and_prepare_data(
     data_file_path: str | Path,
     text_column: str,

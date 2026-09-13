@@ -35,7 +35,11 @@ type FineTuningMethod = Literal["qdora", "xqdora", "adalora", "-"]
 type PerformanceMetric = Literal["f1_weighted", "f1", "accuracy", "recall", "precision"]
 type ModelKind = Literal["llm", "bert"]
 
-_FROZEN = ConfigDict(frozen=True)
+# `extra="forbid"`: an unknown key anywhere in `config.yml` is a typo or a
+# setting that never reaches the pipeline (pydantic's default silently drops
+# it — `gradient_checkpointing: false` under `training.arguments` was accepted
+# and ignored). Failing at load time is the only moment it can be noticed.
+_FROZEN = ConfigDict(frozen=True, extra="forbid")
 
 
 def _expand(raw: str | Path) -> Path:
@@ -251,14 +255,53 @@ class InferenceConfig(BaseModel):
     comments: bool = True
 
 
+class HubConfig(BaseModel):
+    """Where ``reddit upload`` publishes selected checkpoints.
+
+    Attributes:
+        namespace: Hugging Face user or organisation the repositories are
+            created under; ``None`` disables uploading until it is set.
+        private: Create repositories as private (the default: a checkpoint
+            is reviewed on the Hub before it is made public).
+        repo_name: Repository-name template. ``{slug}`` expands to
+            ``{model}-{method}`` for PEFT checkpoints and to ``{model}``
+            for fully fine-tuned encoders; ``{model}`` and ``{method}`` are
+            also available on their own. The default follows the
+            hand-published ``andreadm/reddit-pulse-bert``.
+        collection: Collection every published repository is added to: its
+            slug (``owner/name-<id>``), the slug without the id, or the
+            collection URL. ``None`` skips the step.
+    """
+
+    model_config = _FROZEN
+
+    namespace: str | None = None
+    private: bool = True
+    repo_name: str = "reddit-pulse-{slug}"
+    collection: str | None = None
+
+    def repo_id(self, model: str, method: str) -> str:
+        """The full ``namespace/name`` of the repository for one checkpoint.
+
+        Raises:
+            ConfigError: ``hub.namespace`` is not set.
+        """
+        if not self.namespace:
+            raise ConfigError("`hub.namespace` must name the Hugging Face user or organisation to upload to.")
+        slug = model if method == "-" else f"{model}-{method}"
+        return f"{self.namespace}/{self.repo_name.format(slug=slug, model=model, method=method)}"
+
+
 class ArgumentsConfig(BaseModel):
     """Pass-through subset of ``transformers.TrainingArguments``.
 
     Every field here must be an accepted ``TrainingArguments.__init__``
     parameter for the installed transformers version: the strategies splat
-    ``model_dump()`` straight into the constructor, and an unknown key raises
-    ``TypeError`` inside the per-seed loop, silently failing every seed.
+    ``model_dump()`` straight into the constructor, and a stale field raises
+    ``TypeError`` — caught once by :func:`reddit.training.loop._preflight`.
     (``overwrite_output_dir`` was dropped when transformers 5 removed it.)
+    Conversely a key declared in ``config.yml`` but *not* here is rejected
+    at load time (``extra="forbid"``) instead of being silently dropped.
     """
 
     model_config = _FROZEN
@@ -348,6 +391,13 @@ class TrainingConfig(BaseModel):
         num_train_epochs: Epoch budget for decoder-LLM training.
         gradient_accumulation_steps: Micro-batches accumulated per optimizer
             step for decoder-LLM training.
+        gradient_checkpointing: Recompute activations in the backward pass
+            of decoder-LLM training (reentrant checkpointing, applied both
+            through ``peft.prepare_model_for_kbit_training`` and
+            ``TrainingArguments``). A memory-only trade: it changes no
+            numerics, costs roughly a third of the step time, and is worth
+            it only where activations would not otherwise fit — the 9B/27B
+            models on a 16 GB card, not the sub-3B models on an 80 GB one.
         bert: Full-fine-tuning hyperparameters for ``kind: bert`` families.
     """
 
@@ -361,6 +411,9 @@ class TrainingConfig(BaseModel):
     learning_rate: float = 1e-4
     num_train_epochs: int = 40
     gradient_accumulation_steps: int = 8
+    # `True` is what the pipeline always did; `config.yml` turns it off for
+    # runs whose activations fit comfortably without it.
+    gradient_checkpointing: bool = True
     bert: BertTrainingConfig = Field(default_factory=BertTrainingConfig)
 
 
@@ -381,6 +434,7 @@ class Config(BaseModel):
     training: TrainingConfig
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
+    hub: HubConfig = Field(default_factory=HubConfig)
     families: dict[str, Family] = Field(default_factory=dict)
 
     @property

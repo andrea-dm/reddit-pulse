@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,9 +22,11 @@ from reddit.modeling.loading import (
     BERT_MAX_LENGTH,
     LLM_MAX_LENGTH,
     DeviceProfile,
+    adapter_base_model,
     bert_model_args,
     detect_device_profile,
     llm_model_args,
+    strip_quantization,
 )
 
 TURING = DeviceProfile(capability=(7, 5), flash_attention=False)
@@ -190,3 +194,52 @@ class TestLoadingModule:
             if profile.flash_attention:
                 assert importlib.util.find_spec("flash_attn") is not None
                 assert profile.native_bf16
+
+
+class TestAdapterBaseModel:
+    """Telling a PEFT adapter directory from a full checkpoint."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_a_full_checkpoint_has_no_base_model(self, tmp_path: Path) -> None:
+            (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+
+            assert adapter_base_model(tmp_path) is None
+
+        def test_an_adapter_names_the_checkpoint_it_was_trained_on(self, tmp_path: Path) -> None:
+            (tmp_path / "adapter_config.json").write_text(
+                '{"base_model_name_or_path": "Qwen/Qwen2.5-0.5B", "task_type": "SEQ_CLS"}', encoding="utf-8"
+            )
+
+            assert adapter_base_model(tmp_path) == "Qwen/Qwen2.5-0.5B"
+
+        def test_an_adapter_config_without_a_base_yields_none(self, tmp_path: Path) -> None:
+            (tmp_path / "adapter_config.json").write_text('{"task_type": "SEQ_CLS"}', encoding="utf-8")
+
+            assert adapter_base_model(tmp_path) is None
+
+
+class TestStripQuantization:
+    """A saved checkpoint config describes the architecture, not the training-time quantization."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_the_quantization_block_is_dropped_from_a_copy(self) -> None:
+            original = SimpleNamespace(
+                num_labels=3, quantization_config={"load_in_4bit": True}, _pre_quantization_dtype="x"
+            )
+
+            stripped = strip_quantization(original)
+
+            assert not hasattr(stripped, "quantization_config")
+            assert not hasattr(stripped, "_pre_quantization_dtype")
+            assert stripped.num_labels == 3
+            assert original.quantization_config == {"load_in_4bit": True}
+
+        def test_a_config_without_quantization_is_copied_unchanged(self) -> None:
+            original = SimpleNamespace(num_labels=3)
+
+            stripped = strip_quantization(original)
+
+            assert stripped is not original
+            assert vars(stripped) == vars(original)

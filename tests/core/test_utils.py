@@ -16,7 +16,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from reddit.core.utils import archive_model, clear_hf_cache, dump_object, fmt_td, now
+from reddit.core.utils import archive_model, clear_hf_cache, dump_object, fmt_td, now, read_jsonl
 
 JSONABLE = st.recursive(
     st.none() | st.booleans() | st.integers(min_value=-(2**53), max_value=2**53) | st.text(max_size=20),
@@ -301,3 +301,42 @@ class TestUtilsModule:
 
             assert line.endswith(b"\n")
             assert line[:-1].count(b"\n") == 0
+
+
+class TestReadJsonl:
+    """Tolerant JSONL parsing: newline-terminated or glued records."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_newline_terminated_records_round_trip(self, tmp_path: Path) -> None:
+            path = tmp_path / "dump.jsonl"
+            path.write_bytes(dump_object({"seed": 1}) + dump_object({"seed": 2, "x": [1, 2]}))
+
+            assert read_jsonl(path) == [{"seed": 1}, {"seed": 2, "x": [1, 2]}]
+
+        def test_records_glued_on_one_line_are_still_all_read(self, tmp_path: Path) -> None:
+            """The 2025 dumps were written without a newline between records."""
+            path = tmp_path / "dump.jsonl"
+            path.write_text('{"seed": 1}{"seed": 2}\n{"seed": 3}', encoding="utf-8")
+
+            assert [r["seed"] for r in read_jsonl(path)] == [1, 2, 3]
+
+        def test_an_empty_file_has_no_records(self, tmp_path: Path) -> None:
+            path = tmp_path / "dump.jsonl"
+            path.touch()
+
+            assert read_jsonl(path) == []
+
+        def test_a_non_object_record_is_a_type_error(self, tmp_path: Path) -> None:
+            path = tmp_path / "dump.jsonl"
+            path.write_text("[1, 2]\n", encoding="utf-8")
+
+            with pytest.raises(TypeError, match="non-object"):
+                read_jsonl(path)
+
+        def test_broken_json_is_a_value_error_naming_the_file(self, tmp_path: Path) -> None:
+            path = tmp_path / "dump.jsonl"
+            path.write_text('{"seed": 1', encoding="utf-8")
+
+            with pytest.raises(ValueError, match=r"dump\.jsonl"):
+                read_jsonl(path)

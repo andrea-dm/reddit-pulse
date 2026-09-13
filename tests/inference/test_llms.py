@@ -296,3 +296,47 @@ class TestLlmsInferenceModule:
             )
 
             assert processed == 2
+
+
+class TestLoadClassifier:
+    """Adapters are reloaded on top of their base model, never through the transformers shortcut."""
+
+    @pytest.fixture
+    def loaders(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
+        calls: dict[str, list[Any]] = {"from_pretrained": [], "peft": []}
+
+        def fake_from_pretrained(source: Any, **kwargs: Any) -> Any:
+            calls["from_pretrained"].append((source, kwargs))
+            return SimpleNamespace(source=source)
+
+        def fake_peft(base: Any, adapter: str) -> Any:
+            calls["peft"].append((base, adapter))
+            return SimpleNamespace(base=base, adapter=adapter)
+
+        monkeypatch.setattr(
+            llms, "AutoModelForSequenceClassification", SimpleNamespace(from_pretrained=fake_from_pretrained)
+        )
+        monkeypatch.setattr(llms, "PeftModel", SimpleNamespace(from_pretrained=fake_peft))
+        monkeypatch.setattr(llms, "llm_model_args", dict)
+        return calls
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_an_adapter_is_applied_on_top_of_its_base_model(
+            self, tmp_path: Path, loaders: dict[str, list[Any]]
+        ) -> None:
+            (tmp_path / "adapter_config.json").write_text('{"base_model_name_or_path": "acme/base"}', encoding="utf-8")
+
+            model = llms.load_classifier(tmp_path, "conf", cache_dir=tmp_path / "hf")
+
+            assert loaders["from_pretrained"] == [("acme/base", {"config": "conf", "cache_dir": tmp_path / "hf"})]
+            assert loaders["peft"] == [(model.base, str(tmp_path))]
+            assert model.base.source == "acme/base"
+
+        def test_a_full_checkpoint_loads_directly(self, tmp_path: Path, loaders: dict[str, list[Any]]) -> None:
+            (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+
+            model = llms.load_classifier(tmp_path, "conf")
+
+            assert model.source == tmp_path
+            assert loaders["peft"] == []
