@@ -134,4 +134,4 @@ If you use this code, please cite the paper it implements:
 
 ## License
 
-See [`LICENSE.md`](LICENSE.md).
+MIT; see [`LICENSE.md`](LICENSE.md). [`NOTICE.md`](NOTICE.md) states how the license relates to the paper.

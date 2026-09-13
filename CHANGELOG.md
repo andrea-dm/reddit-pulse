@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `LICENSE.md` holds only the MIT license text, so GitHub detects the
+  license; the paper's disclaimer (the views are the authors', the license
+  covers the software only) moves to `NOTICE.md`, which ships in the
+  package's `license-files` and is included in the License docs page.
 - `config.yml` now selects `bf16` mixed precision (was `fp16`): the A100
   target loads and de-quantizes the decoder LLMs in bfloat16
   (`reddit.modeling.loading`), fp16 autocast on top needed a `GradScaler`
