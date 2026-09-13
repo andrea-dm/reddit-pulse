@@ -26,6 +26,7 @@ import torch
 from pandas import Timestamp
 from sklearn.utils.class_weight import compute_class_weight
 from transformers import EarlyStoppingCallback, TrainingArguments, set_seed
+from transformers.integrations.integration_utils import get_reporting_integration_callbacks
 from transformers.trainer_callback import PrinterCallback
 
 from reddit.core.errors import ConfigError
@@ -229,8 +230,10 @@ def _preflight(ctx: SeedContext, strategy: SeedStrategy) -> _RunPlan:
 
     Raises:
         ConfigError: ``training.arguments.bf16`` is set on a GPU without
-            native bfloat16 (Turing or older), or ``training.arguments``
-            carries a key/value ``TrainingArguments`` rejects.
+            native bfloat16 (Turing or older), ``training.arguments``
+            carries a key/value ``TrainingArguments`` rejects, or
+            ``training.arguments.report_to`` names an experiment-tracking
+            integration transformers does not know.
 
     Notes:
         Creates the per-family metrics dump directory and touches both JSONL
@@ -254,6 +257,10 @@ def _preflight(ctx: SeedContext, strategy: SeedStrategy) -> _RunPlan:
 
     try:
         args = strategy.training_arguments(ctx)
+        # The Trainer resolves `report_to` only in its constructor, i.e. once
+        # per seed — an unknown integration (or the `None` transformers 5
+        # wraps as `[None]`) would otherwise be swallowed N times over.
+        get_reporting_integration_callbacks(args.report_to)
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid `training.arguments` for `{ctx.run_name}`: {e}") from e
 

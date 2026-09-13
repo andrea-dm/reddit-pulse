@@ -209,6 +209,13 @@ class TestLoggingModule:
 
             assert log_file.read_text(encoding="utf-8").count("only once") == 1
 
+        @pytest.mark.parametrize("logger_name", ["httpx", "httpcore"])
+        def test_noisy_third_party_loggers_are_quieted(self, tmp_path: Path, logger_name: str) -> None:
+            """One INFO line per Hub request otherwise floods both the console and the file."""
+            setup_logging(log_file=tmp_path / "run.log")
+
+            assert logging.getLogger(logger_name).getEffectiveLevel() >= logging.WARNING
+
         def test_setup_accepts_a_string_path(self, tmp_path: Path) -> None:
             setup_logging(log_file=str(tmp_path / "as_string.log"))
 

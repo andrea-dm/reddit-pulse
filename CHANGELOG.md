@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `setup_logging` raises `httpx`/`httpcore` (transitively used by
+  `huggingface_hub` for every Hub request) to `WARNING`: one INFO-level
+  line per `HEAD`/`GET` request was flooding both the console and the
+  per-run log file, indistinguishable from this project's own progress
+  lines (`src/reddit/core/logging.py`).
+- `training.arguments.report_to` defaults to `"none"` and a YAML `null` is
+  coerced to it: transformers 5 wraps `None` as `[None]` and the Trainer
+  then rejected it as an unknown integration on every seed, so a `reddit
+  run` trained nothing. `run_seeds` now also validates the reporting
+  integrations once in its preflight, so an unknown tracker is a single
+  `ConfigError` rather than N swallowed per-seed failures
+  (`src/reddit/core/config.py`, `src/reddit/training/loop.py`, `config.yml`).
 - `update_answers` serialises its read-merge-write through a lock
   directory (`<answers>.lock/`, `mkdir`-atomic so it works on the CIFS
   mount): two `reddit` processes labelling different models of the same
