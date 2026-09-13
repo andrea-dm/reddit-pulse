@@ -53,6 +53,8 @@ depends_on = [
 path = "reddit.tasks"
 depends_on = [
     "reddit.core",
+    "reddit.data",
+    "reddit.modeling",
     "reddit.training",
     "reddit.inference",
     "reddit.hub",

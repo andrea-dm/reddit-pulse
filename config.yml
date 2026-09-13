@@ -118,6 +118,19 @@ inference:
   submissions: true
   comments: true
 
+# `reddit upload`: one Hub repository per selected checkpoint, named from the
+# template (`{slug}` is `{model}-{method}`, or just `{model}` for BERT):
+# `reddit-pulse-gemma2_2b-xqdora` and so on, next to the hand-published
+# `andreadm/reddit-pulse-bert`; each is added to the collection below. Needs
+# a token with write access: `HF_WRITE_TOKEN` in the dotenv (`HF_TOKEN` is the
+# read token training uses). Repositories are public like the reference
+# model; pass `--private` (or set it here) to review first.
+hub:
+  namespace: andreadm
+  private: false
+  repo_name: reddit-pulse-{slug}
+  collection: https://huggingface.co/collections/andreadm/reddit-infla-pulse
+
 # Model families, selected at the CLI with --family (or individual models
 # with --model). To split work across GPUs, run disjoint --model subsets per
 # --gpu invocation instead of declaring a separate family.

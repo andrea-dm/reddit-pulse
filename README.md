@@ -22,7 +22,7 @@ repository as a full replication package.
 config.yml            # unified configuration (paths, training, families)
 mkdocs.yml, docs/      # documentation site (build/serve instructions below)
 src/reddit/
-  cli.py              # `reddit` entry point (run / train / predict)
+  cli.py              # `reddit` entry point (run / train / predict / upload)
   core/               # config schema, logging, env bootstrap, shared utils
   data/               # gold-dataset preparation (split -> DatasetDict)
   modeling/           # quantization + PEFT configs, metrics, weighted trainer
@@ -66,6 +66,7 @@ reddit train   --model gemma2_27b   --gpu 0        # train + select only, one mo
 reddit predict --model gemma2_27b --directory models   # label with saved checkpoints
 reddit predict --family bert        --directory models
 reddit run     --all-families       --gpu 0        # every model in every family
+reddit upload  --model gemma2_2b    --dry-run       # stage Hub repos under outputs/hub/, push without --dry-run
 ```
 
 `--family`/`--model` accept one or more values and pick from `families:` in

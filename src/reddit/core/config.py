@@ -255,6 +255,43 @@ class InferenceConfig(BaseModel):
     comments: bool = True
 
 
+class HubConfig(BaseModel):
+    """Where ``reddit upload`` publishes selected checkpoints.
+
+    Attributes:
+        namespace: Hugging Face user or organisation the repositories are
+            created under; ``None`` disables uploading until it is set.
+        private: Create repositories as private (the default: a checkpoint
+            is reviewed on the Hub before it is made public).
+        repo_name: Repository-name template. ``{slug}`` expands to
+            ``{model}-{method}`` for PEFT checkpoints and to ``{model}``
+            for fully fine-tuned encoders; ``{model}`` and ``{method}`` are
+            also available on their own. The default follows the
+            hand-published ``andreadm/reddit-pulse-bert``.
+        collection: Collection every published repository is added to: its
+            slug (``owner/name-<id>``), the slug without the id, or the
+            collection URL. ``None`` skips the step.
+    """
+
+    model_config = _FROZEN
+
+    namespace: str | None = None
+    private: bool = True
+    repo_name: str = "reddit-pulse-{slug}"
+    collection: str | None = None
+
+    def repo_id(self, model: str, method: str) -> str:
+        """The full ``namespace/name`` of the repository for one checkpoint.
+
+        Raises:
+            ConfigError: ``hub.namespace`` is not set.
+        """
+        if not self.namespace:
+            raise ConfigError("`hub.namespace` must name the Hugging Face user or organisation to upload to.")
+        slug = model if method == "-" else f"{model}-{method}"
+        return f"{self.namespace}/{self.repo_name.format(slug=slug, model=model, method=method)}"
+
+
 class ArgumentsConfig(BaseModel):
     """Pass-through subset of ``transformers.TrainingArguments``.
 
@@ -397,6 +434,7 @@ class Config(BaseModel):
     training: TrainingConfig
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
+    hub: HubConfig = Field(default_factory=HubConfig)
     families: dict[str, Family] = Field(default_factory=dict)
 
     @property

@@ -72,6 +72,8 @@ already documented under `reddit.cli`.
 
 ::: reddit.tasks.predict
 
+::: reddit.tasks.upload
+
 ## `reddit.hub`
 
 ::: reddit.hub.card

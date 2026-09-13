@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `reddit upload`: publishes selected checkpoints to the Hugging Face Hub,
+  one repository per checkpoint (`hub.namespace` / `hub.repo_name` in
+  `config.yml`; the template defaults to `reddit-pulse-{slug}` after the
+  hand-published `andreadm/reddit-pulse-bert`), staging the folder under
+  `outputs/hub/` first (`--dry-run` stops there), then adds it to
+  `hub.collection`. The token comes from `HF_WRITE_TOKEN` in the dotenv
+  (`HF_TOKEN` as fallback). Each repository holds the weights, tokenizer
+  and `config.json`, a generated model card in the layout of the reference
+  card (front matter with `base_model`/`model-index`, a notice that the
+  checkpoint was retrained and its metrics may differ from the paper's,
+  labels, usage snippet, seed protocol, hyperparameters, per-seed
+  evaluation, corpus label shares when the checkpoint labelled the corpus,
+  files, reproducing,
+  dual citation, license), `training_args.json` (local paths removed), a
+  `training_config.yml` extract, `evaluation/*.csv` and the base model's
+  own `LICENSE*`/`USE_POLICY*` files (`src/reddit/hub/`,
+  `src/reddit/tasks/upload.py`, `src/reddit/cli.py`).
 - `reddit.core.utils.read_jsonl`: parses JSONL dumps whether or not their
   records are newline-terminated (the 2025 dumps glued records together).
 - `reddit.modeling.loading.adapter_base_model` and

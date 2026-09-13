@@ -25,6 +25,7 @@ from reddit.core.config import (
     DatasetConfig,
     EnvironmentConfig,
     Family,
+    HubConfig,
     InferenceConfig,
     LabelsConfig,
     Models,
@@ -683,3 +684,32 @@ class TestConfigModule:
 
             with pytest.raises(ConfigError):
                 config.family(name)
+
+
+class TestHubConfig:
+    """Repository naming for `reddit upload`."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_the_default_template_joins_model_and_method(self) -> None:
+            assert (
+                HubConfig(namespace="acme").repo_id("qwen2.5_0.5b", "qdora") == "acme/reddit-pulse-qwen2.5_0.5b-qdora"
+            )
+
+        def test_an_encoder_has_no_method_in_its_name(self) -> None:
+            assert HubConfig(namespace="acme").repo_id("inflabert", "-") == "acme/reddit-pulse-inflabert"
+
+        def test_the_template_can_use_model_and_method_separately(self) -> None:
+            hub = HubConfig(namespace="acme", repo_name="{method}--{model}")
+
+            assert hub.repo_id("gemma2_2b", "xqdora") == "acme/xqdora--gemma2_2b"
+
+        def test_without_a_namespace_naming_is_a_config_error(self) -> None:
+            with pytest.raises(ConfigError, match=r"hub\.namespace"):
+                HubConfig().repo_id("gemma2_2b", "qdora")
+
+        def test_repositories_are_private_by_default(self) -> None:
+            assert HubConfig().private is True
+
+        def test_no_collection_is_configured_by_default(self) -> None:
+            assert HubConfig().collection is None

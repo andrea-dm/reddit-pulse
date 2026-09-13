@@ -20,6 +20,7 @@ Examples:
         reddit run --family test --limit 1 --gpu 0
         reddit train --model gemma2_27b --gpu 0
         reddit predict --family bert --directory models
+        reddit upload --model qwen2.5_0.5b --dry-run
         python -m reddit --help
 """
 
@@ -39,6 +40,7 @@ from reddit.core.logging import setup_logging
 from reddit.tasks.predict import execute_predict, setup_predict
 from reddit.tasks.run import execute_run, setup_run
 from reddit.tasks.selection import selection_log_name
+from reddit.tasks.upload import execute_upload, setup_upload
 
 DEFAULT_CONFIG = "config.yml"
 
@@ -108,6 +110,14 @@ def build_parser() -> ArgumentParser:
     _add_common_arguments(predict_parser)
     predict_parser.set_defaults(func=execute_predict)
 
+    upload_parser = subparsers.add_parser(
+        "upload",
+        help="Publish previously selected checkpoints to the Hugging Face Hub (see `hub:` in the config).",
+    )
+    setup_upload(upload_parser)
+    _add_common_arguments(upload_parser)
+    upload_parser.set_defaults(func=execute_upload)
+
     return parser
 
 
@@ -155,7 +165,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not produced:
-        logging.error("`%s` finished without producing any model or labelled checkpoint.", args.command)
+        logging.error(
+            "`%s` finished without producing anything (no checkpoint trained, labelled or published).", args.command
+        )
         return 1
     return 0
 

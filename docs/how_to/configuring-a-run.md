@@ -80,6 +80,9 @@ models = config.family("bert")  # resolved Models view for one family
 - **`inference:`** — batch size and submissions/comments toggles for corpus
   labelling.
 - **`environment:`** — `HF_HOME`, dotenv path, `PYTORCH_CUDA_ALLOC_CONF`.
+- **`hub:`** — where `reddit upload` publishes: `namespace`, `private`
+  (default `true`), the `repo_name` template and the `collection` to add
+  each repository to (see [Publishing to the Hub](publishing-to-the-hub.md)).
 - **`families:`** — named groups of models, each with an optional
   `kind: bert` (default `llm`) and an optional `finetuning_methods`
   override.

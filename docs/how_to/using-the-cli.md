@@ -4,8 +4,8 @@
 
 The `reddit` command (installed as a console script, also reachable via
 `python -m reddit`) is the single entry point for training, selecting, and
-labelling. It dispatches to one of three subcommands, all sharing
-`-c/--config` and `-g/--gpu`.
+labelling and publishing. It dispatches to one of four subcommands, all
+sharing `-c/--config` and `-g/--gpu`.
 
 ## When to use it
 
@@ -35,6 +35,10 @@ for the full expected output.
   corpus labelling (equivalent to `run --no-inference`).
 - **`reddit predict -f <family>... -d <directory>`** — label the corpus using
   checkpoints already present in `<directory>`, without training anything.
+- **`reddit upload -m <model>... [--dry-run] [--private|--public]`** — stage
+  the selected checkpoints found in `-d <directory>` (default `models`) as
+  Hub repository folders under `outputs/hub/` and, unless `--dry-run`, push
+  them to `hub.namespace` (see [Publishing to the Hub](publishing-to-the-hub.md)).
 
 Every subcommand selects which models to act on via one — and only one — of:
 
@@ -58,7 +62,8 @@ args = parser.parse_args(["run", "--family", "bert", "--gpu", "0"])
 ```
 
 For fully programmatic control (no argument parsing at all), call
-:func:`reddit.tasks.run.execute_run` / :func:`reddit.tasks.predict.execute_predict`
+:func:`reddit.tasks.run.execute_run` / :func:`reddit.tasks.predict.execute_predict` /
+:func:`reddit.tasks.upload.execute_upload`
 directly with a `Namespace`-like object and a loaded
 :class:`reddit.core.config.Config`.
 
@@ -71,9 +76,11 @@ flowchart TD
     C --> D{"subcommand"}
     D -->|run/train| E["tasks.run.execute_run"]
     D -->|predict| F["tasks.predict.execute_predict"]
+    D -->|upload| I["tasks.upload.execute_upload"]
     E --> G["training.llms/bert.run_family"]
     F --> H["inference.llms/bert.predict_from_archives/directories"]
     G -->|unless --no-inference| H
+    I --> J["hub.upload.stage_checkpoint / publish"]
 ```
 
 The CLI resolves the config, prepares the CUDA/HF environment, then hands
