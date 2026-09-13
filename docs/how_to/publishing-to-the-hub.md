@@ -11,12 +11,19 @@ tables (`evaluation/`). The repository folder is assembled under
 `outputs/hub/{repository name}/` first, so it can be inspected before
 anything is pushed.
 
+The published checkpoints live in the
+[**Reddit Infla-pulse** collection](https://huggingface.co/collections/andreadm/reddit-infla-pulse)
+on the Hub, which `hub.collection` in `config.yml` points at.
+
 ## When to use it
 
 After `reddit train`/`run` has selected a checkpoint and you want it on the
-Hub. Repositories are created **private** by default (`hub.private`); the
-generated card is a draft to review — its limitations section is generic
-and it does not compute the per-class breakdown of the hand-written cards.
+Hub. `HubConfig` creates repositories **private** unless told otherwise;
+the shipped `config.yml` sets `hub.private: false`, so the cohort is public
+like the rest of the collection (pass `--private` to review a checkpoint
+first). The generated card is a draft to review — its limitations section
+is generic and it does not compute the per-class breakdown of the
+hand-written cards.
 
 ## Minimal example
 
@@ -37,8 +44,10 @@ Requirements:
   A read-only token is enough for training but the upload fails at
   repository creation.
 - `hub.collection` (a slug, a slug without its id, or the collection URL)
-  adds every published repository to that collection; a failure there is
-  logged after the upload has succeeded, not raised.
+  adds every published repository to that collection, the
+  [Reddit Infla-pulse collection](https://huggingface.co/collections/andreadm/reddit-infla-pulse)
+  in the shipped config; a failure there is logged after the upload has
+  succeeded, not raised.
 - Base models with a redistribution license of their own (Llama, Apache
   bases) ship `LICENSE*`/`USE_POLICY*` files: they are fetched from the
   base repository and published alongside the weights, and the card's
