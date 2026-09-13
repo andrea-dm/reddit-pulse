@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
 from reddit.core.config import Config, PathsConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def bootstrap_directories(config: Config) -> None:

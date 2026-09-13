@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         SystemExit: If the GitHub token is missing from the environment, the
             issue configuration file is missing, or the API returns an error.
     """
+    del argv  # reserved for future flags; every input comes from files and the environment
     issue_data = read_json_file(TMP_DIR, "issue_response.json")
     issue_iid = issue_data.get("number") or issue_data.get("iid")
 

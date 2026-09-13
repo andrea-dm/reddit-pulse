@@ -17,6 +17,17 @@ Overview](advanced/implementation_design/system_overview.md#scope-boundary)
 for the exact stage-by-stage boundary before relying on this repository as
 a full replication package.
 
+## Published models
+
+The selected checkpoints of every fine-tuned model are public on the
+Hugging Face Hub, in the
+[**Reddit Infla-pulse** collection](https://huggingface.co/collections/andreadm/reddit-infla-pulse):
+one repository per base model and fine-tuning method
+(`andreadm/reddit-pulse-{model}-{method}`, e.g. `reddit-pulse-gemma2_2b-xqdora`),
+plus the fully fine-tuned encoder `andreadm/reddit-pulse-bert`.
+[Publishing to the Hub](how_to/publishing-to-the-hub.md) describes how
+`reddit upload` builds them.
+
 ## Where to start
 
 This site is organised in three tiers, by audience:

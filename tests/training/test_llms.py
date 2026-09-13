@@ -13,7 +13,9 @@ require a real quantized model.
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
@@ -27,7 +29,8 @@ from transformers import DataCollatorWithPadding, TrainingArguments
 from reddit.core.config import ArgumentsConfig, Config, ModelSpec
 from reddit.core.errors import ConfigError, UnsupportedMethodError
 from reddit.data.preparation import DataBundle
-from reddit.training.llms import LlmSeedStrategy, run_family
+from reddit.training import llms
+from reddit.training.llms import LlmSeedStrategy, run_family, run_model
 from reddit.training.loop import SeedContext
 
 from ..conftest import RecordingLog
@@ -145,11 +148,25 @@ class TestLlmsTrainingModule:
             assert arguments.output_dir == str(seed_context.cache_dir)
 
         def test_memory_saving_options_are_enabled_for_quantized_training(self, seed_context: SeedContext) -> None:
+            """The shipped default keeps reentrant checkpointing on, as the pipeline always did."""
             arguments = LlmSeedStrategy().training_arguments(seed_context)
 
+            assert seed_context.config.training.gradient_checkpointing is True
             assert arguments.gradient_checkpointing is True
             assert arguments.gradient_checkpointing_kwargs == {"use_reentrant": True}
             assert arguments.lr_scheduler_type == "cosine"
+
+        def test_gradient_checkpointing_can_be_switched_off_from_the_config(
+            self, seed_context: SeedContext, config_factory: Callable[..., Config], raw_config: dict[str, Any]
+        ) -> None:
+            """A memory-only trade the sub-3B cohort on an 80 GB card does not need."""
+            training = {**raw_config["training"], "gradient_checkpointing": False}
+            context = replace(seed_context, config=config_factory(training=training))
+
+            arguments = LlmSeedStrategy().training_arguments(context)
+
+            assert arguments.gradient_checkpointing is False
+            assert arguments.gradient_checkpointing_kwargs is None
 
         def test_the_pass_through_arguments_section_is_applied(self, seed_context: SeedContext) -> None:
             arguments = LlmSeedStrategy().training_arguments(seed_context)
@@ -287,3 +304,55 @@ class TestLlmsTrainingModule:
             log_file = bootstrapped_config.paths.logs_dir / f"tiny_llm_{bootstrapped_config.system.date}.log"
             assert log_file.is_file()
             assert "Running `tiny_llm-xqdora`" in log_file.read_text(encoding="utf-8")
+
+        # ───────────────────────────────────────────── run_model: archiving ──
+
+        @pytest.fixture
+        def selected_checkpoint(self, bootstrapped_config: Config, monkeypatch: pytest.MonkeyPatch) -> Any:
+            """Stub everything up to median selection so ``run_model`` reaches the archive step."""
+            checkpoint = bootstrapped_config.paths.models_dir / "tiny_llm_qdora_11"
+            checkpoint.mkdir(parents=True)
+            (checkpoint / "adapter_model.safetensors").write_text("weights", encoding="utf-8")
+
+            def fake_tokenizer(*_args: Any, **_kwargs: Any) -> Any:
+                return SimpleNamespace(pad_token=None, eos_token="<eos>", padding_side="left")
+
+            monkeypatch.setattr(llms, "AutoTokenizer", SimpleNamespace(from_pretrained=fake_tokenizer))
+            monkeypatch.setattr(llms, "run_seeds", lambda *_a, **_k: {})
+            monkeypatch.setattr(llms, "select_median", lambda *_a, **_k: (checkpoint, None))
+            return checkpoint
+
+        def test_a_failed_archive_is_reported_as_an_error_naming_the_directory(
+            self,
+            bootstrapped_config: Config,
+            selected_checkpoint: Any,
+            recording_log: RecordingLog,
+            monkeypatch: pytest.MonkeyPatch,
+            caplog: pytest.LogCaptureFixture,
+        ) -> None:
+            """`reddit predict` scans for `*.zip` only, so an unzipped checkpoint is invisible to it."""
+            monkeypatch.setattr(llms, "archive_model", lambda *_a, **_k: False)
+            models = bootstrapped_config.family("llm_family")
+
+            with caplog.at_level(logging.ERROR):
+                selected = run_model(bootstrapped_config, models, models.models[0], "qdora", recording_log, seeds=(11,))
+
+            assert selected is True  # the checkpoint exists; only its packaging failed
+            error = recording_log.text_at("error")
+            assert "could not be archived" in error
+            assert str(selected_checkpoint) in error
+            assert "could not be archived" in caplog.text
+
+        def test_a_successful_archive_is_silent(
+            self,
+            bootstrapped_config: Config,
+            selected_checkpoint: Any,
+            recording_log: RecordingLog,
+            monkeypatch: pytest.MonkeyPatch,
+        ) -> None:
+            monkeypatch.setattr(llms, "archive_model", lambda *_a, **_k: True)
+            models = bootstrapped_config.family("llm_family")
+
+            run_model(bootstrapped_config, models, models.models[0], "qdora", recording_log, seeds=(11,))
+
+            assert recording_log.messages_at("error") == []

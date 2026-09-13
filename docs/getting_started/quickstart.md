@@ -1,7 +1,9 @@
 # Quickstart
 
 This walks through the smallest real invocation: fine-tuning one small
-model (`qwen2.5_0.5b`, the `test` family in `config.yml`) on a single seed,
+model (`qwen2.5_0.5b_smoke`, the `test` family in `config.yml` — the same
+Qwen2.5-0.5B checkpoint as `qwen.qwen2.5_0.5b`, under a name of its own so
+its artefacts never mix with a real run's) on a single seed,
 then labelling the corpus with the selected checkpoint.
 
 ## Prerequisites
@@ -24,7 +26,7 @@ then labelling the corpus with the selected checkpoint.
 reddit run --family test --limit 1 --gpu 0
 ```
 
-- `--family test` selects the `test` family (`qwen2.5_0.5b` only) from
+- `--family test` selects the `test` family (`qwen2.5_0.5b_smoke` only) from
   `config.yml`.
 - `--limit 1` fine-tunes on only the first configured seed instead of the
   full list — fast, but not representative of the paper's multi-seed
@@ -36,10 +38,10 @@ reddit run --family test --limit 1 --gpu 0
 
 1. `reddit.cli.main` loads and validates `config.yml`, creates every
    `paths:` directory, configures logging to
-   `logs/qwen2.5_0.5b_test.log`, and exports the GPU/HF environment
+   `logs/run_test.log`, and exports the GPU/HF environment
    variables.
 2. `reddit.training.llms.run_family` loads the gold dataset, fine-tunes
-   `qwen2.5_0.5b` with the QDoRA+ and xQDoRA+ recipes (both default
+   `qwen2.5_0.5b_smoke` with the QDoRA+ and xQDoRA+ recipes (both default
    methods for a family that does not override `finetuning_methods`), and
    writes a checkpoint plus JSONL metrics under `models/` and
    `outputs/test_{date}/`.
@@ -48,7 +50,7 @@ reddit run --family test --limit 1 --gpu 0
    `results/selected_models_metrics.jsonl`.
 4. `reddit.inference.llms.label_corpus` labels every configured subreddit's
    submissions and comments with the selected checkpoint, writing
-   `labelled/qwen2.5_0.5b_submissions_qdora_predicted_labels.csv` (and the
+   `labelled/qwen2.5_0.5b_smoke_submissions_qdora_predicted_labels.csv` (and the
    `xqdora`/comments equivalents) and merging the results into
    `results/all_final_jae_test.csv` / `results/all_comments_final_jae_test.csv`.
 
@@ -57,13 +59,13 @@ reddit run --family test --limit 1 --gpu 0
 The process exits `0` and logs a line of the form:
 
 ```text
-Selected model: `qwen2.5_0.5b_qdora_107935903` [0.812345]
+Selected model: `qwen2.5_0.5b_smoke_qdora_107935903` [0.812345]
 ```
 
 (the exact score varies by seed/run) followed by a labelling summary. A
 non-zero exit means either a `ConfigError` (printed as a usage message) or
 that the run finished without producing any checkpoint — check
-`logs/qwen2.5_0.5b_test.log` for details.
+`logs/run_test.log` for details.
 
 ## Train-only variant
 

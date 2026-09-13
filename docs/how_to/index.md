@@ -15,6 +15,7 @@ have not installed the package yet, start at
 | [Fine-Tuning Decoder LLMs](fine-tuning-decoder-llms.md) | QDoRA+/xQDoRA+ PEFT fine-tuning of Gemma-2/Llama-3/Qwen2.5 classifiers. |
 | [Fine-Tuning BERT Encoders](fine-tuning-bert-encoders.md) | Full fine-tuning of BERT-base/FinBERT/InflaBERT classifiers. |
 | [Labelling the Corpus](labelling-the-corpus.md) | Running a trained checkpoint over the full per-subreddit corpus. |
+| [Publishing to the Hub](publishing-to-the-hub.md) | Staging and uploading selected checkpoints, with a generated model card, to the Hugging Face Hub. |
 
 ## Where to go next
 

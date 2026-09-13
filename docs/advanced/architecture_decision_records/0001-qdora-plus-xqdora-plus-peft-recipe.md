@@ -20,7 +20,7 @@ training when needed.
 Fine-tune every decoder LLM with a two-tier recipe registered in
 `reddit.modeling.peft.peft_config`:
 
-- **QDoRA+**: 4-bit NF4 quantization (`quantization_config`) + DoRA
+- **QDoRA+**: 4-bit NF4 quantization (`build_quantization_config`) + DoRA
   adapters (`use_dora=True`) on the attention projections, rank `r=32`,
   paired with a LoRA+ optimizer (`loraplus_lr_ratio=5`) in
   `reddit.training.llms.LlmSeedStrategy.optimizers`.
@@ -44,10 +44,13 @@ Both methods are fine-tuned for every LLM family unless a family overrides
   evidently considered at the config-schema level but is not part of the
   accepted recipe.
 - `reddit.modeling.loading.llm_model_args` (dtype, quantization,
-  `attn_implementation="flash_attention_2"`, `device_map="auto"`) is the
-  single owner of *how* a checkpoint is materialized, shared by both the
-  training and inference paths, so the quantization/attention
-  configuration cannot drift between the two.
+  attention implementation, `device_map="auto"`) is the single owner of
+  *how* a checkpoint is materialized, shared by both the training and
+  inference paths, so the quantization/attention configuration cannot
+  drift between the two. The dtype and attention implementation are
+  resolved against the visible GPU (`DeviceProfile`): bfloat16 +
+  flash-attention 2 on Ampere or newer, fp16 + SDPA on Turing — the
+  recipe itself (NF4, DoRA, LoRA+) is device-independent.
 
 ## Alternatives considered
 

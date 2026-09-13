@@ -1,4 +1,4 @@
-"""Corpus labelling with fine-tuned decoder SLM classifiers (4-bit, flash-attention).
+"""Corpus labelling with fine-tuned decoder SLM classifiers (4-bit, device-tuned attention).
 
 Runs the QDoRA+/xQDoRA+-fine-tuned small decoder LLMs (Gemma-2, Llama-3,
 Qwen2.5; "SLM" in the paper, to distinguish them from the unfine-tuned
@@ -26,18 +26,61 @@ from functools import partial
 from pathlib import Path
 from shutil import rmtree
 from time import monotonic_ns
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
+from peft import PeftModel
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
-from reddit.core.config import Config, Models
 from reddit.core.logging import print_log
-from reddit.core.protocols import LogFn
 from reddit.core.utils import fmt_td
 from reddit.inference.corpus import CorpusJob, predict_corpus
 from reddit.inference.discovery import iter_model_archives
-from reddit.modeling.loading import LLM_MAX_LENGTH, llm_model_args
+from reddit.modeling.loading import LLM_MAX_LENGTH, adapter_base_model, llm_model_args, strip_quantization
+
+if TYPE_CHECKING:
+    from reddit.core.config import Config, Models
+    from reddit.core.protocols import LogFn
+
+
+def load_classifier(model_path: str | Path, model_conf: Any, *, cache_dir: str | Path | None = None) -> Any:
+    """Reload a selected checkpoint for inference, exactly as it was trained.
+
+    An adapter directory (one carrying ``adapter_config.json``) is reloaded
+    the way PEFT itself does it: the 4-bit base model first, then
+    ``PeftModel.from_pretrained`` on top. Handing the directory straight to
+    ``AutoModelForSequenceClassification`` — transformers' own adapter
+    shortcut — rebuilt this DoRA adapter into a model whose logits differed
+    from the trained one by up to 17 on the same titles (predictions
+    flipped), so the shortcut is never used. A directory without an
+    adapter config is a full checkpoint and loads directly.
+
+    Args:
+        model_path: The checkpoint directory (unzipped archive).
+        model_conf: The ``AutoConfig`` matching ``model_path``.
+        cache_dir: Hub cache the base weights are read from (and written
+            to on a miss); ``None`` uses the default ``HF_HOME`` cache.
+
+    Returns:
+        The loaded classifier, dispatched onto the visible device.
+
+    Notes:
+        Reads the base checkpoint from the Hub cache (network/disk I/O on
+        a miss) and the adapter from ``model_path``.
+    """
+    # A config read back from a checkpoint may still carry the quantization
+    # block of the training-time load; the 4-bit request below is the one
+    # that counts.
+    model_conf = strip_quantization(model_conf)
+    base = adapter_base_model(model_path)
+    if base is None:
+        return AutoModelForSequenceClassification.from_pretrained(
+            model_path, config=model_conf, cache_dir=cache_dir, **llm_model_args()
+        )
+    base_model = AutoModelForSequenceClassification.from_pretrained(
+        base, config=model_conf, cache_dir=cache_dir, **llm_model_args()
+    )
+    return PeftModel.from_pretrained(base_model, str(model_path))
 
 
 def build_jobs(config: Config, family: str, model_name: str, finetuning_method: str) -> list[CorpusJob]:
@@ -107,7 +150,7 @@ def build_jobs(config: Config, family: str, model_name: str, finetuning_method: 
     return jobs
 
 
-def label_corpus(
+def label_corpus(  # noqa: PLR0913 — mirrors `reddit.core.protocols.Labeller`
     *,
     config: Config,
     family: str,
@@ -143,8 +186,11 @@ def label_corpus(
     logging.info("Labelling...")
     t1_task = monotonic_ns()
 
-    model_conf.use_cache = True
-    loaded_model = AutoModelForSequenceClassification.from_pretrained(model_path, config=model_conf, **llm_model_args())
+    # `use_cache` stays off: a classification forward pass never generates, so
+    # a KV cache is pure allocation — gigabytes per batch on the 9B/27B models
+    # at batch_size=64 x LLM_MAX_LENGTH, on a 16 GB card. The base weights are
+    # read from the per-model cache the training stage already filled.
+    loaded_model = load_classifier(model_path, model_conf, cache_dir=config.hf_home / model_name)
     loaded_model.config.pad_token_id = tokenizer.pad_token_id
 
     for job in build_jobs(config, family, model_name, finetuning_method):
@@ -153,7 +199,7 @@ def label_corpus(
         predict_corpus(loaded_model, tokenizer, config, job, log=log)
         log(f"Labelling {job.name}... done: it took {fmt_td(monotonic_ns() - t1)}.", level="info")
 
-    logging.info(f"Labelling... done: it took {fmt_td(monotonic_ns() - t1_task)}.")
+    logging.info("Labelling... done: it took %s.", fmt_td(monotonic_ns() - t1_task))
 
 
 def _predict_one(
@@ -176,19 +222,15 @@ def _predict_one(
     log(f"Preparing for `{finetuning_method}`...")
     t1 = monotonic_ns()
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path,
-        truncation=True,
-        max_length=LLM_MAX_LENGTH,
-        padding="max_length",
-        use_fast=True,
-        cache_dir=hf_cache,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, cache_dir=hf_cache)
     tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
     tokenizer.padding_side = "left"
 
+    # Checkpoints saved before `config.json` travelled with the adapter carry
+    # no model config of their own; their base model's is the next best thing.
+    config_source = model_path if (Path(model_path) / "config.json").is_file() else adapter_base_model(model_path)
     model_conf = AutoConfig.from_pretrained(
-        model_path,
+        config_source or model_path,
         num_labels=config.labels.num_labels,
         id2label=config.labels.id2label,
         label2id=config.labels.label2id,
@@ -212,16 +254,16 @@ def _predict_one(
         )
     except Exception as e:
         log(f"Something unexpected occurred in the inference process: {e}\n{traceback.format_exc()}", level="critical")
-        logging.critical(f"Something unexpected occurred in the inference process: {e}", exc_info=True)
+        logging.critical("Something unexpected occurred in the inference process: %s", e, exc_info=True)
     finally:
         torch.cuda.empty_cache()
         gc.collect()
     log(f"Inference via `{finetuning_method}`... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
-    logging.info(f"Cleaning up model `{model_name}` artifacts...")
+    logging.info("Cleaning up model `%s` artifacts...", model_name)
     rmtree(cache_dir, ignore_errors=True)
     rmtree(hf_cache, ignore_errors=True)
-    logging.info(f"Cleaning up model `{model_name}` artifacts... done.")
+    logging.info("Cleaning up model `%s` artifacts... done.", model_name)
 
 
 def predict_from_archives(config: Config, models: Models, directory: str | Path) -> int:
@@ -239,21 +281,21 @@ def predict_from_archives(config: Config, models: Models, directory: str | Path)
     Returns:
         The number of checkpoints that were labelled.
     """
-    logging.info(f"Found {torch.cuda.device_count()} GPUs available for the pool.")
-    logging.info(f"Found {len(models.models)} models in the config.")
+    logging.info("Found %s GPUs available for the pool.", torch.cuda.device_count())
+    logging.info("Found %s models in the config.", len(models.models))
     logging.info("Running started.")
     t1_run = monotonic_ns()
 
     list_of_models = [model.name for model in models.models]
-    logging.info(f"Models to be used: {', '.join(list_of_models)}")
+    logging.info("Models to be used: %s", ", ".join(list_of_models))
 
     processed = 0
     for model_name, finetuning_method, model_path in iter_model_archives(directory, methods=models.finetuning_methods):
         if model_name not in list_of_models:
-            logging.warning(f"Model `{model_name}` not found in the config. Skipping...")
+            logging.warning("Model `%s` not found in the config. Skipping...", model_name)
             continue
 
-        logging.info(f"Inference of `{model_name}` via {finetuning_method} from `{model_path}`.")
+        logging.info("Inference of `%s` via %s from `%s`.", model_name, finetuning_method, model_path)
 
         log_file = config.paths.logs_dir / f"{model_name}_{config.system.date}.log"
         log_file.touch(exist_ok=True)
@@ -262,5 +304,5 @@ def predict_from_archives(config: Config, models: Models, directory: str | Path)
         _predict_one(config, models, model_name, finetuning_method, model_path, log)
         processed += 1
 
-    logging.info(f"Running ended. It took {fmt_td(monotonic_ns() - t1_run)}.")
+    logging.info("Running ended. It took %s.", fmt_td(monotonic_ns() - t1_run))
     return processed

@@ -11,8 +11,9 @@ Two safety fixtures are autouse for the entire session:
   directly (``prepare_environment``), which ``monkeypatch.setenv`` cannot
   always undo; the process environment is snapshotted and restored verbatim.
 * ``_isolated_root_logger`` — ``setup_logging`` clears and repopulates the
-  root logger and opens file handlers; they are closed and the original
-  configuration restored.
+  root logger and opens file handlers, and raises the level of a few noisy
+  third-party loggers (``httpx``/``httpcore``); handlers are closed and
+  every mutated level restored.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from yaml import safe_dump, safe_load
 
 from reddit.core.config import Config, LabelsConfig, load_config
 from reddit.core.environment import bootstrap_directories
-from reddit.core.logging import LogLevel
+from reddit.core.logging import _NOISY_THIRD_PARTY_LOGGERS, LogLevel
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CONFIG = REPO_ROOT / "config.yml"
@@ -44,6 +45,8 @@ if find_spec("torch") is None:
     collect_ignore += ["inference", "modeling", "training", "tasks"]
 if find_spec("datasets") is None or find_spec("sklearn") is None:
     collect_ignore += ["data"]
+if find_spec("huggingface_hub") is None:
+    collect_ignore += ["hub"]
 
 PATH_KEYS = (
     "reddit_dir",
@@ -61,7 +64,7 @@ PATH_KEYS = (
 
 
 @pytest.fixture(autouse=True)
-def _isolated_environ() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+def _isolated_environ() -> Iterator[None]:
     """Restore ``os.environ`` verbatim after every test."""
     saved = os.environ.copy()
     try:
@@ -72,7 +75,7 @@ def _isolated_environ() -> Iterator[None]:  # pyright: ignore[reportUnusedFuncti
 
 
 @pytest.fixture(autouse=True)
-def _safe_hf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+def _safe_hf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``HF_HOME`` inside ``tmp_path`` for every test.
 
     ``clear_hf_cache`` and the training/inference cleanup paths delete whole
@@ -84,11 +87,12 @@ def _safe_hf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # p
 
 
 @pytest.fixture(autouse=True)
-def _isolated_root_logger() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Restore the root logger's handlers and level after every test."""
+def _isolated_root_logger() -> Iterator[None]:
+    """Restore the root logger's handlers/level and the noisy third-party levels."""
     root = logging.getLogger()
     saved_handlers = list(root.handlers)
     saved_level = root.level
+    saved_third_party = {name: logging.getLogger(name).level for name in _NOISY_THIRD_PARTY_LOGGERS}
     try:
         yield
     finally:
@@ -97,6 +101,8 @@ def _isolated_root_logger() -> Iterator[None]:  # pyright: ignore[reportUnusedFu
                 handler.close()
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
+        for name, level in saved_third_party.items():
+            logging.getLogger(name).setLevel(level)
 
 
 # ──────────────────────────────────────────────── the repository's own config ───
@@ -115,7 +121,7 @@ def project_config_path() -> Path:
 
 
 @pytest.fixture(scope="session")
-def _project_config_baseline() -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]
+def _project_config_baseline() -> dict[str, Any]:
     """Immutable parse of the shipped ``config.yml``; use ``project_config_raw``."""
     return safe_load(PROJECT_CONFIG.read_text(encoding="utf-8"))
 

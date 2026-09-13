@@ -1,4 +1,4 @@
-# reddit
+# Reddit pulse
 
 Fine-tunes decoder LLMs (QDoRA+/xQDoRA+ PEFT on 4-bit bases) and BERT-family
 encoders as three-way **directional inflation-expectation classifiers**
@@ -22,12 +22,13 @@ repository as a full replication package.
 config.yml            # unified configuration (paths, training, families)
 mkdocs.yml, docs/      # documentation site (build/serve instructions below)
 src/reddit/
-  cli.py              # `reddit` entry point (run / train / predict)
+  cli.py              # `reddit` entry point (run / train / predict / upload)
   core/               # config schema, logging, env bootstrap, shared utils
   data/               # gold-dataset preparation (split -> DatasetDict)
   modeling/           # quantization + PEFT configs, metrics, weighted trainer
   training/           # multi-seed pipelines (llms, bert) + median selection
   inference/          # corpus labelling, checkpoint discovery (zip/dirs)
+  hub/                # model cards, staging and upload to the Hugging Face Hub
   tasks/              # CLI task modules (setup_*/execute_* pairs)
 data/                 # subreddit CSVs + labelled.xlsx gold set
 models/               # trained checkpoints ({model}_{method}_{seed}[.zip])
@@ -38,7 +39,8 @@ outputs/ results/ labelled/ logs/   # run artefacts
 
 ```bash
 uv venv && uv pip install -e .
-# optional, needs a CUDA toolchain:
+# optional, Ampere-or-newer GPUs only (needs a CUDA toolchain to build;
+# older GPUs such as the T4 use SDPA attention automatically):
 uv pip install flash-attn --no-build-isolation
 ```
 
@@ -48,7 +50,7 @@ under `environment.dotenv` in `config.yml`.
 Quality gates (also run in CI — see `.github/workflows/`):
 
 ```bash
-ruff check src/ tests/
+ruff check           # paths come from [tool.ruff] include in pyproject.toml
 pyright              # strict; config + venv pinned in pyrightconfig.json
 tach check           # module boundaries (layering declared in tach.toml)
 deptry src           # dependency hygiene (config in pyproject.toml)
@@ -64,12 +66,45 @@ reddit train   --model gemma2_27b   --gpu 0        # train + select only, one mo
 reddit predict --model gemma2_27b --directory models   # label with saved checkpoints
 reddit predict --family bert        --directory models
 reddit run     --all-families       --gpu 0        # every model in every family
+reddit upload  --model gemma2_2b    --dry-run       # stage Hub repos under outputs/hub/, push without --dry-run
 ```
 
 `--family`/`--model` accept one or more values and pick from `families:` in
 `config.yml`; `--all-families` (alias `--all-models`) runs everything.
 `--gpu` sets `CUDA_VISIBLE_DEVICES` — split a cohort across GPUs by giving
-each invocation a disjoint `--model` subset.
+each invocation a disjoint `--model` subset, or let
+[`scripts/train_queue.sh`](scripts/train_queue.sh) queue the models by GPU
+memory (see [Fine-Tuning Decoder LLMs](docs/how_to/fine-tuning-decoder-llms.md)).
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md).
+
+
+## Published models
+
+The selected checkpoints are public on the Hugging Face Hub, grouped in the
+[**Reddit Infla-pulse** collection](https://huggingface.co/collections/andreadm/reddit-infla-pulse).
+Each repository holds the weights (a PEFT adapter for the decoder LLMs), a
+model card with usage snippets, the per-seed evaluation tables and the
+training configuration that produced it.
+
+Decoder LLMs, fine-tuned with the two PEFT recipes:
+
+| Base model | QDoRA+ | xQDoRA+ |
+|---|---|---|
+| Gemma 2 2B | [`reddit-pulse-gemma2_2b-qdora`](https://huggingface.co/andreadm/reddit-pulse-gemma2_2b-qdora) | [`reddit-pulse-gemma2_2b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-gemma2_2b-xqdora) |
+| Llama 3.2 1B | [`reddit-pulse-llama3.2_1b-qdora`](https://huggingface.co/andreadm/reddit-pulse-llama3.2_1b-qdora) | [`reddit-pulse-llama3.2_1b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-llama3.2_1b-xqdora) |
+| Llama 3.2 3B | [`reddit-pulse-llama3.2_3b-qdora`](https://huggingface.co/andreadm/reddit-pulse-llama3.2_3b-qdora) | [`reddit-pulse-llama3.2_3b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-llama3.2_3b-xqdora) |
+| Qwen2.5 0.5B | [`reddit-pulse-qwen2.5_0.5b-qdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_0.5b-qdora) | [`reddit-pulse-qwen2.5_0.5b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_0.5b-xqdora) |
+| Qwen2.5 1.5B | [`reddit-pulse-qwen2.5_1.5b-qdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_1.5b-qdora) | [`reddit-pulse-qwen2.5_1.5b-xqdora`](https://huggingface.co/andreadm/reddit-pulse-qwen2.5_1.5b-xqdora) |
+
+The BERT-family encoder is fully fine-tuned instead, with no PEFT adapter:
+[`reddit-pulse-bert`](https://huggingface.co/andreadm/reddit-pulse-bert), from
+[InflaBERT](https://huggingface.co/MAPAi/InflaBERT).
+
+`reddit upload` stages and publishes these repositories; see
+[Publishing to the Hub](docs/how_to/publishing-to-the-hub.md).
 
 ## Documentation
 
@@ -106,4 +141,4 @@ If you use this code, please cite the paper it implements:
 
 ## License
 
-See [`LICENSE.md`](LICENSE.md).
+MIT; see [`LICENSE.md`](LICENSE.md). [`NOTICE.md`](NOTICE.md) states how the license relates to the paper.

@@ -73,7 +73,9 @@ for why this shape was chosen.
   `huggingface-hub`), gated by an optional HF token (see
   [Security](security.md)).
 - **CUDA** — every production code path assumes a GPU; `bitsandbytes`
-  4-bit quantization and `flash-attn` are both CUDA-only.
+  4-bit quantization is CUDA-only, and the optional `flash-attn` kernels
+  additionally need an Ampere-or-newer device (older GPUs fall back to
+  SDPA attention automatically).
 - **Local filesystem** — the gold dataset, per-subreddit corpus CSVs, and
   every run artefact (checkpoints, JSONL dumps, CSV answers files, logs)
   are plain files under the directories declared in `config.yml`

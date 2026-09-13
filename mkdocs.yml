@@ -80,6 +80,7 @@ nav:
       - Fine-Tuning Decoder LLMs: how_to/fine-tuning-decoder-llms.md
       - Fine-Tuning BERT Encoders: how_to/fine-tuning-bert-encoders.md
       - Labelling the Corpus: how_to/labelling-the-corpus.md
+      - Publishing to the Hub: how_to/publishing-to-the-hub.md
   - Advanced:
       - Implementation Design:
           - advanced/implementation_design/index.md

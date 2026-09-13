@@ -33,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         SystemExit: If the GitHub token is missing from the environment or any
             required input payload metadata files are missing.
     """
+    del argv  # reserved for future flags; every input comes from files and the environment
     payload = read_json_file(WORKING_DIR, "mr.json")
     payload["body"] = read_text_file(WORKING_DIR, "mr.md")
 

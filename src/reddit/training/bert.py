@@ -20,7 +20,7 @@ import traceback
 from functools import partial
 from shutil import rmtree
 from time import monotonic_ns
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from transformers import (
@@ -31,14 +31,16 @@ from transformers import (
     TrainingArguments,
 )
 
-from reddit.core.config import Config, Models, ModelSpec
 from reddit.core.logging import print_log
-from reddit.core.protocols import Labeller, LogFn
 from reddit.core.utils import fmt_td
-from reddit.data.preparation import DataBundle
 from reddit.modeling.loading import BERT_MAX_LENGTH, bert_model_args
 from reddit.training.loop import SeedContext, run_seeds
 from reddit.training.selection import select_median
+
+if TYPE_CHECKING:
+    from reddit.core.config import Config, Models, ModelSpec
+    from reddit.core.protocols import Labeller, LogFn
+    from reddit.data.preparation import DataBundle
 
 
 class BertSeedStrategy:
@@ -182,8 +184,25 @@ def train_model(
 ) -> bool:
     """Train one encoder over all seeds, select the median seed, optionally label the corpus.
 
+    Args:
+        config: Project configuration.
+        models: The resolved family selection ``model`` belongs to.
+        model: The specific model spec (name + hub id) being fine-tuned.
+        log: Human-oriented progress logger for this run.
+        seeds: Split seeds to iterate over (see :class:`reddit.training.loop.SeedContext`).
+        labeller: Injected corpus-labelling step, run on the selected
+            checkpoint; ``None`` skips labelling.
+
     Returns:
         ``True`` when a median checkpoint was selected, ``False`` otherwise.
+
+    Notes:
+        Downloads/reads the base checkpoint from the Hugging Face Hub cache
+        and creates the per-run cache directories (I/O); removes both
+        caches at the end of the run, whether or not a checkpoint was
+        selected and whether or not labelling failed. The removal is not in a
+        ``finally`` block: an exception that escapes before it leaves the
+        caches on disk.
     """
     log("Preparing...")
     t1 = monotonic_ns()
@@ -243,7 +262,7 @@ def train_model(
                 f"Something unexpected occurred in the inference process: {e}\n{traceback.format_exc()}",
                 level="critical",
             )
-            logging.critical(f"Something unexpected occurred in the inference process: {e}", exc_info=True)
+            logging.critical("Something unexpected occurred in the inference process: %s", e, exc_info=True)
         log(f"Inference... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
     log("Cleaning...")
@@ -275,8 +294,8 @@ def run_family(
     """
     t1_run = monotonic_ns()
 
-    logging.info(f"Found {torch.cuda.device_count()} GPUs available for the pool.")
-    logging.info(f"Found {len(models.models)} models in the config to train.")
+    logging.info("Found %s GPUs available for the pool.", torch.cuda.device_count())
+    logging.info("Found %s models in the config to train.", len(models.models))
 
     seeds = tuple(config.training.seeds[:limit] if limit > 0 else config.training.seeds)
 
@@ -296,5 +315,5 @@ def run_family(
         log(f"Running `{model.name}`... done: it took {fmt_td(t2 - t1)}.")
         log(f"Elapsed time since the job was launched: {fmt_td(t2 - t1_run)}.", level="info")
 
-    logging.info(f"Running... done: it took {fmt_td(monotonic_ns() - t1_run)}.")
+    logging.info("Running... done: it took %s.", fmt_td(monotonic_ns() - t1_run))
     return selected

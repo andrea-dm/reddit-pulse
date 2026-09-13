@@ -65,12 +65,19 @@ class TestPackageSurface:
             assert all(hasattr(data, name) for name in data.__all__)
 
         def test_the_tasks_package_exports_every_setup_execute_pair(self) -> None:
-            assert set(tasks.__all__) == {"execute_predict", "execute_run", "setup_predict", "setup_run"}
+            assert set(tasks.__all__) == {
+                "execute_predict",
+                "execute_run",
+                "setup_predict",
+                "setup_run",
+                "setup_upload",
+                "execute_upload",
+            }
             assert all(hasattr(tasks, name) for name in tasks.__all__)
 
         def test_importing_core_does_not_pull_in_torch(self) -> None:
             """``core`` must stay importable without the heavy ML stack."""
-            import importlib.util
+            import importlib.util  # noqa: PLC0415 — scoped to this test
 
             for module in ("reddit.core.config", "reddit.core.errors", "reddit.core.utils"):
                 spec = importlib.util.find_spec(module)

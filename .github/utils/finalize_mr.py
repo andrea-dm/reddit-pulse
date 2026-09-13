@@ -26,10 +26,7 @@ def _verify_mr_merged(api: GitHubAPI, mr_iid: int) -> APIResponseObject:
 
     state = get_json_string_member(data, "state") or ""
     merged_at = get_json_string_member(data, "merged_at") or "N/A"
-    merged_by = (
-        get_json_string_member(get_json_object_member(data, "merged_by"), "login")
-        or "N/A"
-    )
+    merged_by = get_json_string_member(get_json_object_member(data, "merged_by"), "login") or "N/A"
 
     print(f"  State:     {state}")
     print(f"  Merged at: {merged_at}")
@@ -73,10 +70,7 @@ def _run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[s
     print(f"  $ {' '.join(cmd)}")
     result = subprocess.run(cmd, text=True, capture_output=True, check=False)
     if check and result.returncode != 0:
-        raise SystemExit(
-            f"Command failed: {' '.join(cmd)}\n"
-            + (result.stderr.strip() or result.stdout.strip())
-        )
+        raise SystemExit(f"Command failed: {' '.join(cmd)}\n" + (result.stderr.strip() or result.stdout.strip()))
     return result
 
 
@@ -187,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         SystemExit: If the token is missing, caches are absent, the PR is not
             merged, or any git operation fails.
     """
+    del argv  # reserved for future flags; every input comes from files and the environment
     mr_data = read_json_file(TMP_DIR, "mr_response.json")
     issue_data = read_json_file(TMP_DIR, "issue_response.json")
 
@@ -194,13 +189,9 @@ def main(argv: list[str] | None = None) -> int:
     issue_iid = issue_data.get("number") or issue_data.get("iid")
 
     if not isinstance(mr_iid, int) or not isinstance(issue_iid, int):
-        raise SystemExit(
-            f"Invalid numbers: PR={mr_iid}, Issue={issue_iid} (expected integers)"
-        )
+        raise SystemExit(f"Invalid numbers: PR={mr_iid}, Issue={issue_iid} (expected integers)")
 
-    branch = (
-        get_json_string_member(get_json_object_member(mr_data, "head"), "ref") or ""
-    )
+    branch = get_json_string_member(get_json_object_member(mr_data, "head"), "ref") or ""
 
     api = GitHubAPI()
 
@@ -216,9 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, object] = {
         "mrMerged": True,
         "mergedAt": get_json_string_member(mr_result, "merged_at"),
-        "mergedBy": get_json_string_member(
-            get_json_object_member(mr_result, "merged_by"), "login"
-        ),
+        "mergedBy": get_json_string_member(get_json_object_member(mr_result, "merged_by"), "login"),
         "issueClosed": True,
         "issueStatusDone": True,
         "manifestCommitted": manifest_committed,
@@ -226,10 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     write_json_file(WORKING_DIR, "finalize_results.json", result)
-    print(
-        "\n✓ Finalization complete. "
-        + f"Results saved to {WORKING_DIR}/finalize_results.json"
-    )
+    print(f"\n✓ Finalization complete. Results saved to {WORKING_DIR}/finalize_results.json")
     return 0
 
 

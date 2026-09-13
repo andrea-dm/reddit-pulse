@@ -8,10 +8,11 @@ concrete :class:`Labeller` into the training pipelines instead of
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from reddit.core.config import Config
-from reddit.core.logging import LogLevel
+if TYPE_CHECKING:
+    from reddit.core.config import Config
+    from reddit.core.logging import LogLevel
 
 
 class LogFn(Protocol):
@@ -21,7 +22,9 @@ class LogFn(Protocol):
     ``filename`` and ``pid`` already bound.
     """
 
-    def __call__(self, message: str | None = None, *, level: LogLevel | int | None = 0) -> None: ...
+    def __call__(self, message: str | None = None, *, level: LogLevel | int | None = 0) -> None:
+        """Emit ``message`` with the prefix selected by ``level``."""
+        ...
 
 
 class Labeller(Protocol):
@@ -34,7 +37,7 @@ class Labeller(Protocol):
     signature so that the two are interchangeable at the injection point.
     """
 
-    def __call__(
+    def __call__(  # noqa: PLR0913 — the injection seam carries every per-checkpoint fact
         self,
         *,
         config: Config,
@@ -45,4 +48,6 @@ class Labeller(Protocol):
         tokenizer: Any,
         finetuning_method: str,
         log: LogFn,
-    ) -> None: ...
+    ) -> None:
+        """Label the corpus with the checkpoint at ``model_path``."""
+        ...

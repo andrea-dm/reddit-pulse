@@ -27,16 +27,13 @@ def main(argv: list[str] | None = None) -> int:
     Raises:
         SystemExit: If the underlying issue JSON tracking file cannot be found.
     """
+    del argv  # reserved for future flags; every input comes from files and the environment
     data = read_json_file(TMP_DIR, "issue_response.json")
 
     iid = data.get("number") or data.get("iid")
     title = get_json_string_member(data, "title") or "<untitled>"
     state = get_json_string_member(data, "state") or "unknown"
-    web_url = (
-        get_json_string_member(data, "html_url")
-        or get_json_string_member(data, "web_url")
-        or ""
-    )
+    web_url = get_json_string_member(data, "html_url") or get_json_string_member(data, "web_url") or ""
 
     print(f"Issue #{iid}: {title}")
     print(f"  State: {state}")

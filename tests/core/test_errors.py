@@ -76,22 +76,20 @@ class TestErrorsModule:
         def test_errors_can_be_chained_from_a_cause(self) -> None:
             cause = ValueError("root cause")
 
-            try:
-                try:
-                    raise cause
-                except ValueError as e:
-                    raise CorpusUnavailableError("answers file missing") from e
-            except CorpusUnavailableError as raised:
-                assert raised.__cause__ is cause
+            with pytest.raises(CorpusUnavailableError) as excinfo:
+                raise CorpusUnavailableError("answers file missing") from cause
+
+            assert excinfo.value.__cause__ is cause
 
         def test_a_bare_reddit_error_does_not_swallow_unrelated_exceptions(self) -> None:
-            unrelated = ValueError("unrelated")
-
-            with pytest.raises(ValueError):
+            def guarded() -> None:
                 try:
-                    raise unrelated
+                    raise ValueError("unrelated")
                 except RedditError:  # pragma: no cover - must not match
                     pytest.fail("ValueError must not be caught as a RedditError")
+
+            with pytest.raises(ValueError, match="unrelated"):
+                guarded()
 
     @pytest.mark.contracts
     class TestContracts:

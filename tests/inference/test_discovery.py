@@ -15,7 +15,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from reddit.inference.discovery import iter_model_archives, iter_model_dirs
+from reddit.inference.discovery import iter_model_archives, iter_model_dirs, parse_archive_name, parse_dir_name
 
 MODEL_NAMES = st.text(alphabet="abcdefghij0123456789._", min_size=1, max_size=12).filter(lambda s: not s.endswith("."))
 METHODS = st.sampled_from(["qdora", "xqdora"])
@@ -56,6 +56,24 @@ class TestDiscoveryModule:
 
     @pytest.mark.unit
     class TestUnits:
+        # ───────────────────────────────────────────────── name parsers ──
+
+        def test_an_archive_stem_splits_into_model_method_and_seed(self) -> None:
+            parsed = parse_archive_name("qwen2.5_0.5b_qdora_239080115", {"qdora"})
+
+            assert parsed == ("qwen2.5_0.5b", "qdora", 239080115)
+
+        @pytest.mark.parametrize("stem", ["qwen2.5_0.5b_lora_1", "gemma_qdora_x1", "qdora_1", "plain"])
+        def test_a_stem_off_the_pattern_or_the_method_set_parses_to_none(self, stem: str) -> None:
+            assert parse_archive_name(stem, {"qdora", "xqdora"}) is None
+
+        def test_a_checkpoint_directory_name_splits_into_model_and_seed(self) -> None:
+            assert parse_dir_name("qwen2.5_0.5b_123") == ("qwen2.5_0.5b", 123)
+
+        @pytest.mark.parametrize("name", ["no_seed_here", "trailing_", "plain", "model_12a"])
+        def test_a_directory_name_without_a_numeric_seed_parses_to_none(self, name: str) -> None:
+            assert parse_dir_name(name) is None
+
         # ────────────────────────────────────────────── iter_model_dirs ──
 
         def test_checkpoint_directories_yield_name_and_path(self, checkpoint_dir: Path) -> None:

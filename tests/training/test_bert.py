@@ -72,7 +72,8 @@ class TestBertTrainingModule:
 
             trainable, total = BertSeedStrategy().parameter_counts(model)
 
-            assert trainable is not None and total is not None
+            assert trainable is not None
+            assert total is not None
             assert trainable < total
 
         def test_tokenization_keeps_the_raw_text_column(self, seed_context: SeedContext) -> None:

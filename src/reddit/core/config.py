@@ -35,7 +35,11 @@ type FineTuningMethod = Literal["qdora", "xqdora", "adalora", "-"]
 type PerformanceMetric = Literal["f1_weighted", "f1", "accuracy", "recall", "precision"]
 type ModelKind = Literal["llm", "bert"]
 
-_FROZEN = ConfigDict(frozen=True)
+# `extra="forbid"`: an unknown key anywhere in `config.yml` is a typo or a
+# setting that never reaches the pipeline (pydantic's default silently drops
+# it — `gradient_checkpointing: false` under `training.arguments` was accepted
+# and ignored). Failing at load time is the only moment it can be noticed.
+_FROZEN = ConfigDict(frozen=True, extra="forbid")
 
 
 def _expand(raw: str | Path) -> Path:
@@ -140,6 +144,7 @@ class DatasetConfig(BaseModel):
     @field_validator("path")
     @classmethod
     def check_if_exists(cls, v: Any) -> Path:
+        """Expand and resolve the gold-file path, requiring an existing regular file."""
         p = _expand(v)
         if not p.exists():
             raise OSError(f"The file `{p}` does not exist.")
@@ -182,14 +187,17 @@ class LabelsConfig(BaseModel):
 
     @property
     def num_labels(self) -> int:
+        """Size of the classification head."""
         return len(self.labels)
 
     @property
     def id2label(self) -> dict[int, str]:
+        """Head id to label name — the ``transformers`` config convention."""
         return {v: k for k, v in self.labels.items()}
 
     @property
     def label2id(self) -> dict[str, int]:
+        """Label name to head id (a fresh copy; the config itself is frozen)."""
         return dict(self.labels)
 
     @property
@@ -247,24 +255,81 @@ class InferenceConfig(BaseModel):
     comments: bool = True
 
 
+class HubConfig(BaseModel):
+    """Where ``reddit upload`` publishes selected checkpoints.
+
+    Attributes:
+        namespace: Hugging Face user or organisation the repositories are
+            created under; ``None`` disables uploading until it is set.
+        private: Create repositories as private (the default: a checkpoint
+            is reviewed on the Hub before it is made public).
+        repo_name: Repository-name template. ``{slug}`` expands to
+            ``{model}-{method}`` for PEFT checkpoints and to ``{model}``
+            for fully fine-tuned encoders; ``{model}`` and ``{method}`` are
+            also available on their own. The default follows the
+            hand-published ``andreadm/reddit-pulse-bert``.
+        collection: Collection every published repository is added to: its
+            slug (``owner/name-<id>``), the slug without the id, or the
+            collection URL. ``None`` skips the step.
+    """
+
+    model_config = _FROZEN
+
+    namespace: str | None = None
+    private: bool = True
+    repo_name: str = "reddit-pulse-{slug}"
+    collection: str | None = None
+
+    def repo_id(self, model: str, method: str) -> str:
+        """The full ``namespace/name`` of the repository for one checkpoint.
+
+        Raises:
+            ConfigError: ``hub.namespace`` is not set.
+        """
+        if not self.namespace:
+            raise ConfigError("`hub.namespace` must name the Hugging Face user or organisation to upload to.")
+        slug = model if method == "-" else f"{model}-{method}"
+        return f"{self.namespace}/{self.repo_name.format(slug=slug, model=model, method=method)}"
+
+
 class ArgumentsConfig(BaseModel):
     """Pass-through subset of ``transformers.TrainingArguments``.
 
     Every field here must be an accepted ``TrainingArguments.__init__``
     parameter for the installed transformers version: the strategies splat
-    ``model_dump()`` straight into the constructor, and an unknown key raises
-    ``TypeError`` inside the per-seed loop, silently failing every seed.
+    ``model_dump()`` straight into the constructor, and a stale field raises
+    ``TypeError`` — caught once by :func:`reddit.training.loop._preflight`.
     (``overwrite_output_dir`` was dropped when transformers 5 removed it.)
+    Conversely a key declared in ``config.yml`` but *not* here is rejected
+    at load time (``extra="forbid"``) instead of being silently dropped.
     """
 
     model_config = _FROZEN
 
     save_total_limit: int = 2
     save_on_each_node: bool = False
-    report_to: str | None = None
+    # "none" disables every experiment-tracking integration. transformers 5
+    # no longer understands ``None`` here: ``TrainingArguments`` wraps it as
+    # ``[None]`` and the Trainer then rejects it as an unknown integration —
+    # once per seed, failing them all. A YAML ``null`` is coerced to "none"
+    # (see `_coerce_report_to`) so older config files keep working.
+    report_to: str | list[str] = "none"
     push_to_hub: bool = False
     disable_tqdm: bool = True
+    # --- Reproducibility ----------------------------------------------
+    # One fixed seed for everything that is *not* the data split: model
+    # initialisation (re-seeded from this value right before the model is
+    # built, see `reddit.training.loop._run_one_seed`) and the Trainer's own
+    # shuffling/dropout (it re-seeds itself from `TrainingArguments.seed`).
+    # The per-run `training.seeds` vary the stratified split only, so
+    # seed-to-seed variance measures split sensitivity, not optimiser noise.
+    # Pinned rather than left to the transformers default so a library
+    # change cannot silently alter the protocol.
+    seed: int = 42
     # --- Performance --------------------------------------------------
+    # Mutually exclusive (see `_check_precision`); `bf16` additionally needs
+    # an Ampere-or-newer GPU, which `reddit.training.loop.run_seeds` checks
+    # against the detected device before any seed starts.
     bf16: bool = False
     fp16: bool = True
     per_device_train_batch_size: int = 64
@@ -278,6 +343,17 @@ class ArgumentsConfig(BaseModel):
     load_best_model_at_end: bool = True
     metric_for_best_model: PerformanceMetric = "f1_weighted"
     greater_is_better: bool = True
+
+    @field_validator("report_to", mode="before")
+    @classmethod
+    def _coerce_report_to(cls, value: object) -> object:
+        return "none" if value is None else value
+
+    @model_validator(mode="after")
+    def _check_precision(self) -> ArgumentsConfig:
+        if self.bf16 and self.fp16:
+            raise ValueError("`training.arguments.bf16` and `training.arguments.fp16` are mutually exclusive")
+        return self
 
 
 class BertTrainingConfig(BaseModel):
@@ -301,7 +377,10 @@ class TrainingConfig(BaseModel):
         early_stopping_patience: Epochs without eval-metric improvement
             before :class:`transformers.EarlyStoppingCallback` stops a seed.
         arguments: Pass-through ``transformers.TrainingArguments`` fields.
-        seeds: Random seeds fine-tuned over per (model, method); see
+        seeds: Split seeds fine-tuned over per (model, method): each one
+            draws a different stratified train/validation/test partition
+            of the gold dataset and nothing else — model initialisation and
+            training are re-seeded from the fixed ``arguments.seed``; see
             :func:`reddit.training.loop.run_seeds`.
         finetuning_methods: Default PEFT methods (QDoRA+/xQDoRA+) for LLM
             families that do not declare their own under ``families:``.
@@ -312,6 +391,13 @@ class TrainingConfig(BaseModel):
         num_train_epochs: Epoch budget for decoder-LLM training.
         gradient_accumulation_steps: Micro-batches accumulated per optimizer
             step for decoder-LLM training.
+        gradient_checkpointing: Recompute activations in the backward pass
+            of decoder-LLM training (reentrant checkpointing, applied both
+            through ``peft.prepare_model_for_kbit_training`` and
+            ``TrainingArguments``). A memory-only trade: it changes no
+            numerics, costs roughly a third of the step time, and is worth
+            it only where activations would not otherwise fit — the 9B/27B
+            models on a 16 GB card, not the sub-3B models on an 80 GB one.
         bert: Full-fine-tuning hyperparameters for ``kind: bert`` families.
     """
 
@@ -325,6 +411,9 @@ class TrainingConfig(BaseModel):
     learning_rate: float = 1e-4
     num_train_epochs: int = 40
     gradient_accumulation_steps: int = 8
+    # `True` is what the pipeline always did; `config.yml` turns it off for
+    # runs whose activations fit comfortably without it.
+    gradient_checkpointing: bool = True
     bert: BertTrainingConfig = Field(default_factory=BertTrainingConfig)
 
 
@@ -345,6 +434,7 @@ class Config(BaseModel):
     training: TrainingConfig
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
+    hub: HubConfig = Field(default_factory=HubConfig)
     families: dict[str, Family] = Field(default_factory=dict)
 
     @property
@@ -447,19 +537,32 @@ def _resolve_relative_paths(raw: dict[str, Any], base: Path) -> dict[str, Any]:
 
 
 def load_config(path_to_config: str | Path) -> Config:
-    """Load and validate the unified project configuration.
+    r"""Load and validate the unified project configuration.
 
     Raises:
-        ConfigError: the file cannot be read, is not valid YAML, or fails
-            schema validation.  Pydantic's ``ValidationError`` and validator
-            ``OSError``\\ s are wrapped so callers (the CLI in particular) can
-            turn any user-fixable configuration problem into a usage message
-            with a single ``except ConfigError``.
+        ConfigError: the file cannot be read, is not valid YAML, is not a
+            mapping at the top level (empty file, bare list, scalar), or
+            fails schema validation.  Pydantic's ``ValidationError`` and
+            validator ``OSError``\ s are wrapped so callers (the CLI in
+            particular) can turn any user-fixable configuration problem into
+            a usage message with a single ``except ConfigError``.
     """
     path = _expand(path_to_config).resolve()
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = safe_load(f)
-        return Config.model_validate(_resolve_relative_paths(raw, path.parent))
-    except (OSError, YAMLError, ValidationError) as e:
+    except (OSError, YAMLError) as e:
+        raise ConfigError(f"Invalid configuration `{path}`: {e}") from e
+    # An empty file parses to `None` and a top-level list to `list`; both used
+    # to escape as a raw `AttributeError` from the path resolution below.
+    if not isinstance(raw, dict):
+        found = "nothing" if raw is None else f"a {type(raw).__name__}"
+        raise ConfigError(f"Invalid configuration `{path}`: expected a mapping at the top level, found {found}")
+    try:
+        # Rationale: yaml parsing yields untyped containers; the shape is
+        # validated by pydantic right after path resolution. Validators
+        # raise `OSError` for a missing gold file; pydantic passes it through
+        # untouched rather than wrapping it in a `ValidationError`.
+        return Config.model_validate(_resolve_relative_paths(cast("dict[str, Any]", raw), path.parent))
+    except (OSError, ValidationError) as e:
         raise ConfigError(f"Invalid configuration `{path}`: {e}") from e

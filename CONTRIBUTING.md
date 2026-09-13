@@ -18,7 +18,7 @@ Every change must pass the same checks CI runs
 (`.github/workflows/dependency-architecture-checks.yml`):
 
 ```bash
-ruff check src/ tests/   # lint + import order
+ruff check               # lint + import order (paths from [tool.ruff] include)
 pyright                  # strict type checking (pyrightconfig.json)
 tach check                # module-boundary layering (tach.toml)
 deptry src                 # dependency hygiene (pyproject.toml [tool.deptry])

@@ -11,27 +11,37 @@ from __future__ import annotations
 import dataclasses
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import torch
 from pandas import DataFrame
+from transformers import TrainingArguments, set_seed
 
 from reddit.core.config import Config, ModelSpec
-from reddit.training.loop import SeedContext, SeedResult, run_seeds
+from reddit.core.errors import ConfigError
+from reddit.modeling.loading import DeviceProfile
+from reddit.training import loop
+from reddit.training.loop import FATAL_ERRORS, SeedContext, SeedResult, _save_model_config, run_seeds
 
 from ..conftest import RecordingLog
+
+TURING = DeviceProfile(capability=(7, 5), flash_attention=False)
+AMPERE = DeviceProfile(capability=(8, 0), flash_attention=False)
 
 
 class ExplodingStrategy:
     """A :class:`reddit.training.loop.SeedStrategy` that fails at model build."""
 
-    def __init__(self, message: str = "no GPU available") -> None:
+    def __init__(self, message: str = "no GPU available", error: type[Exception] = RuntimeError) -> None:
         self.message = message
+        self.error = error
         self.build_calls = 0
 
     def build_model(self, ctx: Any, bundle: Any) -> tuple[Any, Any]:
         self.build_calls += 1
-        raise RuntimeError(self.message)
+        raise self.error(self.message)
 
     def parameter_counts(self, model: Any) -> tuple[int | None, int | None]:  # pragma: no cover - unreachable
         return None, None
@@ -39,14 +49,60 @@ class ExplodingStrategy:
     def tokenize(self, ctx: Any, bundle: Any) -> Any:  # pragma: no cover - unreachable
         return bundle
 
-    def data_collator(self, ctx: Any) -> Any:  # pragma: no cover - unreachable
+    def data_collator(self, ctx: Any) -> Any:
         return None
 
-    def training_arguments(self, ctx: Any) -> Any:  # pragma: no cover - unreachable
-        raise NotImplementedError
+    def training_arguments(self, ctx: Any) -> Any:
+        # Resolved once by the preflight, before any seed; a stand-in carrying
+        # the fixed model-init/training seed and no reporting integration
+        # (what a real `TrainingArguments(report_to="none")` resolves to) is
+        # enough.
+        return SimpleNamespace(seed=42, report_to=[])
 
     def optimizers(self, ctx: Any, model: Any) -> tuple[Any, Any]:  # pragma: no cover - unreachable
         return None, None
+
+
+class InitProbeStrategy(ExplodingStrategy):
+    """Records the RNG state model initialisation would see, then fails."""
+
+    def __init__(self, fixed_seed: int = 42) -> None:
+        super().__init__("probe only")
+        self.fixed_seed = fixed_seed
+        self.draws: list[float] = []
+
+    def training_arguments(self, ctx: Any) -> Any:
+        return SimpleNamespace(seed=self.fixed_seed, report_to=[])
+
+    def build_model(self, ctx: Any, bundle: Any) -> tuple[Any, Any]:
+        self.draws.append(torch.rand(()).item())
+        return super().build_model(ctx, bundle)
+
+
+class MisconfiguredStrategy(ExplodingStrategy):
+    """Fails the way ``TrainingArguments`` does on an unknown pass-through key."""
+
+    def training_arguments(self, ctx: Any) -> Any:
+        raise TypeError("__init__() got an unexpected keyword argument 'overwrite_output_dir'")
+
+
+class UnknownTrackerStrategy(ExplodingStrategy):
+    """Real ``TrainingArguments`` naming an experiment tracker transformers does not know.
+
+    ``TrainingArguments`` itself accepts any string here; only the Trainer's
+    constructor rejects it — which is what a YAML ``null`` (wrapped as
+    ``[None]`` by transformers 5) used to trigger once per seed.
+    """
+
+    def training_arguments(self, ctx: Any) -> Any:
+        return TrainingArguments(output_dir=str(ctx.cache_dir), report_to="no_such_tracker", seed=42)
+
+
+def with_precision(config: Config, *, bf16: bool, fp16: bool) -> Config:
+    """A copy of ``config`` with the two precision flags set as given."""
+    arguments = config.training.arguments.model_copy(update={"bf16": bf16, "fp16": fp16})
+    training = config.training.model_copy(update={"arguments": arguments})
+    return config.model_copy(update={"training": training})
 
 
 class TestLoopModule:
@@ -101,6 +157,11 @@ class TestLoopModule:
             second = SeedResult(seed=1, performance=0.5, method="qdora", model=tmp_path)
 
             assert first == second
+
+        def test_only_environment_level_failures_are_fatal(self) -> None:
+            """A missing package or an unreachable checkpoint; never a per-seed blow-up."""
+            assert set(FATAL_ERRORS) == {ImportError, OSError}
+            assert not issubclass(RuntimeError, FATAL_ERRORS)
 
     @pytest.mark.integration
     class TestIntegration:
@@ -180,3 +241,163 @@ class TestLoopModule:
             assert results == {}
             assert strategy.build_calls == 0
             assert recording_log.messages_at("critical") == []
+
+        # ──────────────────────────────────────────────── seed protocol ──
+
+        def test_model_initialisation_is_seeded_identically_for_every_split(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            """The split is the run's only variable; init must not follow the split seed."""
+            strategy = InitProbeStrategy(fixed_seed=7)
+
+            run_seeds(seed_context, strategy)
+
+            set_seed(7)
+            expected = torch.rand(()).item()
+            assert strategy.draws == [expected] * len(seed_context.seeds)
+
+        def test_the_split_seed_never_reaches_model_initialisation(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            strategy = InitProbeStrategy(fixed_seed=7)
+
+            run_seeds(seed_context, strategy)
+
+            for split_seed in seed_context.seeds:
+                set_seed(split_seed)
+                assert torch.rand(()).item() not in strategy.draws
+
+        # ─────────────────────────────────────────────── fatal failures ──
+
+        @pytest.mark.parametrize("error", [ImportError, OSError])
+        def test_a_fatal_failure_aborts_the_remaining_seeds(
+            self, seed_context: SeedContext, gold_dataset: Path, recording_log: RecordingLog, error: type[Exception]
+        ) -> None:
+            """Retrying a missing package once per seed only re-downloads the checkpoint."""
+            strategy = ExplodingStrategy("flash_attn is not installed", error=error)
+
+            results = run_seeds(seed_context, strategy)
+
+            assert results == {}
+            assert strategy.build_calls == 1
+            critical = recording_log.text_at("critical")
+            assert "flash_attn is not installed" in critical
+            assert f"aborting `{seed_context.run_name}` with 1 seed(s) left" in critical
+
+        def test_a_fatal_failure_keeps_the_seeds_completed_before_it(
+            self, seed_context: SeedContext, gold_dataset: Path, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            outcomes = iter([SeedResult(seed=11, performance=0.5, method="qdora", model=Path("m")), OSError("gated")])
+
+            def run_one(ctx: Any, strategy: Any, plan: Any, seed: int, k: int) -> SeedResult:
+                outcome = next(outcomes)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+            monkeypatch.setattr(loop, "_run_one_seed", run_one)
+
+            results = run_seeds(seed_context, ExplodingStrategy())
+
+            assert set(results) == {11}
+
+        # ─────────────────────────────────────────────────── preflight ──
+
+        def test_the_device_profile_is_announced_before_the_first_seed(
+            self, seed_context: SeedContext, gold_dataset: Path, recording_log: RecordingLog
+        ) -> None:
+            run_seeds(seed_context, ExplodingStrategy())
+
+            assert "Device profile:" in recording_log.text_at("info")
+
+        def test_bf16_is_rejected_on_a_gpu_without_native_bf16(
+            self, seed_context: SeedContext, gold_dataset: Path, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            monkeypatch.setattr(loop, "detect_device_profile", lambda: TURING)
+            context = dataclasses.replace(
+                seed_context, config=with_precision(seed_context.config, bf16=True, fp16=False)
+            )
+            strategy = ExplodingStrategy()
+
+            with pytest.raises(ConfigError, match="bf16"):
+                run_seeds(context, strategy)
+
+            assert strategy.build_calls == 0
+
+        def test_bf16_is_accepted_on_ampere(
+            self, seed_context: SeedContext, gold_dataset: Path, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            monkeypatch.setattr(loop, "detect_device_profile", lambda: AMPERE)
+            context = dataclasses.replace(
+                seed_context, config=with_precision(seed_context.config, bf16=True, fp16=False)
+            )
+            strategy = ExplodingStrategy()
+
+            run_seeds(context, strategy)
+
+            assert strategy.build_calls == len(context.seeds)
+
+        def test_fp16_is_accepted_everywhere(
+            self, seed_context: SeedContext, gold_dataset: Path, monkeypatch: pytest.MonkeyPatch
+        ) -> None:
+            monkeypatch.setattr(loop, "detect_device_profile", lambda: TURING)
+            strategy = ExplodingStrategy()
+
+            run_seeds(
+                dataclasses.replace(seed_context, config=with_precision(seed_context.config, bf16=False, fp16=True)),
+                strategy,
+            )
+
+            assert strategy.build_calls == len(seed_context.seeds)
+
+        def test_an_invalid_training_argument_is_reported_once_as_a_config_error(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            """Previously the `TypeError` was swallowed once per seed, failing them all."""
+            strategy = MisconfiguredStrategy()
+
+            with pytest.raises(ConfigError, match="overwrite_output_dir"):
+                run_seeds(seed_context, strategy)
+
+            assert strategy.build_calls == 0
+
+        def test_an_unknown_reporting_integration_is_reported_once_as_a_config_error(
+            self, seed_context: SeedContext, gold_dataset: Path
+        ) -> None:
+            """The Trainer only resolves `report_to` in its constructor, i.e. once per seed.
+
+            A `report_to: null` in `config.yml` hit exactly this path under
+            transformers 5 and failed every seed of a run the same way.
+            """
+            strategy = UnknownTrackerStrategy()
+
+            with pytest.raises(ConfigError, match="no_such_tracker is not supported"):
+                run_seeds(seed_context, strategy)
+
+            assert strategy.build_calls == 0
+
+
+class TestSaveModelConfig:
+    """`config.json` travels with every checkpoint, PEFT adapters included."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_the_model_config_is_saved_without_its_quantization_block(self, tmp_path: Path) -> None:
+            saved: list[tuple[str, bool]] = []
+
+            class Config:
+                def __init__(self) -> None:
+                    self.quantization_config = {"load_in_4bit": True}
+
+                def save_pretrained(self, directory: str) -> None:
+                    saved.append((directory, hasattr(self, "quantization_config")))
+
+            model_config = Config()
+            _save_model_config(SimpleNamespace(config=model_config), tmp_path / "ckpt")
+
+            assert saved == [(str(tmp_path / "ckpt"), False)]
+            assert model_config.quantization_config == {"load_in_4bit": True}
+
+        def test_a_model_without_a_saveable_config_is_left_alone(self, tmp_path: Path) -> None:
+            _save_model_config(SimpleNamespace(), tmp_path)
+            _save_model_config(SimpleNamespace(config=object()), tmp_path)

@@ -9,9 +9,8 @@ process environment).
 from __future__ import annotations
 
 import logging
-import multiprocessing
 from argparse import Namespace
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -38,16 +37,6 @@ class FuncRecorder:
         return self.returns
 
 
-@pytest.fixture(autouse=True)
-def _restore_multiprocessing_start_method() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """``main`` forces the ``spawn`` start method process-wide."""
-    original = multiprocessing.get_start_method()
-    try:
-        yield
-    finally:
-        multiprocessing.set_start_method(original, force=True)
-
-
 class TestCliModule:
     """Argument parsing, configuration resolution and the ``main`` dispatcher."""
 
@@ -64,9 +53,14 @@ class TestCliModule:
     @pytest.fixture
     def patched_commands(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, FuncRecorder]:
         """Replace the subcommand implementations before the parser binds them."""
-        recorders = {"run": FuncRecorder(returns=1), "predict": FuncRecorder(returns=1)}
+        recorders = {
+            "run": FuncRecorder(returns=1),
+            "predict": FuncRecorder(returns=1),
+            "upload": FuncRecorder(returns=1),
+        }
         monkeypatch.setattr(cli, "execute_run", recorders["run"])
         monkeypatch.setattr(cli, "execute_predict", recorders["predict"])
+        monkeypatch.setattr(cli, "execute_upload", recorders["upload"])
         return recorders
 
     @pytest.mark.unit
@@ -85,7 +79,7 @@ class TestCliModule:
             with pytest.raises(SystemExit):
                 parser.parse_args(["evaluate"])
 
-        @pytest.mark.parametrize("command", ["run", "train", "predict"])
+        @pytest.mark.parametrize("command", ["run", "train", "predict", "upload"])
         def test_every_documented_subcommand_exists(self, command: str) -> None:
             argv = ["-f", "gemma"] + (["-d", "models"] if command == "predict" else [])
 
@@ -105,13 +99,19 @@ class TestCliModule:
             assert args.func is cli.execute_run
             assert args.no_inference is True
 
+        def test_upload_dispatches_to_the_hub_task(self) -> None:
+            args = cli.build_parser().parse_args(["upload", "-m", "gemma2_2b", "--dry-run"])
+
+            assert args.func is cli.execute_upload
+            assert (args.directory, args.dry_run) == ("models", True)
+
         def test_predict_dispatches_to_the_inference_task(self) -> None:
             args = cli.build_parser().parse_args(["predict", "-f", "bert", "-d", "models"])
 
             assert args.func is cli.execute_predict
             assert args.directory == "models"
 
-        @pytest.mark.parametrize("command", ["run", "train", "predict"])
+        @pytest.mark.parametrize("command", ["run", "train", "predict", "upload"])
         def test_the_common_arguments_are_available_everywhere(self, command: str) -> None:
             argv = ["-f", "gemma"] + (["-d", "models"] if command == "predict" else [])
 
@@ -120,7 +120,7 @@ class TestCliModule:
             assert args.config == "other.yml"
             assert args.gpu == "0,1"
 
-        @pytest.mark.parametrize("command", ["run", "train", "predict"])
+        @pytest.mark.parametrize("command", ["run", "train", "predict", "upload"])
         def test_the_common_arguments_default_to_unset(self, command: str) -> None:
             argv = ["-f", "gemma"] + (["-d", "models"] if command == "predict" else [])
 
@@ -247,7 +247,7 @@ class TestCliModule:
         def test_the_gpu_selection_is_exported_before_the_pipeline_runs(
             self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
         ) -> None:
-            import os
+            import os  # noqa: PLC0415 — scoped to this test
 
             run_main("run", "-f", "llm_family", "--gpu", "0,1")
 
@@ -289,14 +289,6 @@ class TestCliModule:
 
             assert slept == []
 
-        def test_the_spawn_start_method_is_forced(
-            self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
-        ) -> None:
-            """CUDA cannot be re-initialised in a forked worker."""
-            run_main("run", "-f", "llm_family")
-
-            assert multiprocessing.get_start_method() == "spawn"
-
         def test_train_reaches_the_pipeline_with_labelling_disabled(
             self, run_main: Callable[..., int], patched_commands: dict[str, FuncRecorder]
         ) -> None:
@@ -307,10 +299,10 @@ class TestCliModule:
 
     @pytest.mark.integration
     class TestConfigFailures:
-        """A bad configuration must become a usage message, not a traceback.
+        r"""A bad configuration must become a usage message, not a traceback.
 
         ``load_config`` wraps pydantic's ``ValidationError`` and validator
-        ``OSError``\\ s into ``ConfigError``, which ``main`` turns into a
+        ``OSError``\ s into ``ConfigError``, which ``main`` turns into a
         ``parser.error`` (exit code 2).  Regression tests for the previously
         unreachable ``except ConfigError`` guard.
         """

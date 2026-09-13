@@ -8,6 +8,7 @@ and ``use_cpu=True`` keeps the Trainer off the GPU.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, cast
 
@@ -249,15 +250,16 @@ class TestTrainerModule:
             assert returned is control
 
         def test_an_unwritable_log_path_does_not_interrupt_training(
-            self, tmp_path: Path, training_arguments: TrainingArguments, capsys: pytest.CaptureFixture[str]
+            self, tmp_path: Path, training_arguments: TrainingArguments, caplog: pytest.LogCaptureFixture
         ) -> None:
             callback = LogMetricsCallback(log_dir=tmp_path, model_name="m", seed=1, date="20240102")
             callback.log_path.unlink()
             callback.log_path.mkdir()
 
-            callback.on_log(training_arguments, TrainerState(), TrainerControl(), logs={"eval_loss": 0.1})
+            with caplog.at_level(logging.WARNING):
+                callback.on_log(training_arguments, TrainerState(), TrainerControl(), logs={"eval_loss": 0.1})
 
-            assert "Error writing to log file" in capsys.readouterr().out
+            assert "Error writing to log file" in caplog.text
 
         def test_a_string_log_directory_is_accepted(self, tmp_path: Path) -> None:
             callback = LogMetricsCallback(log_dir=str(tmp_path), model_name="m", seed=1, date="20240102")

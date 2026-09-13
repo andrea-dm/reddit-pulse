@@ -30,21 +30,27 @@ Notes:
 from __future__ import annotations
 
 import gc
-import json
 import logging
 import os
+import time
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, cast
+from shutil import rmtree
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
-from pandas import DataFrame, read_csv
+from pandas import DataFrame, concat, read_csv, read_json
 from tqdm import tqdm
 
-from reddit.core.config import Config, LabelsConfig
 from reddit.core.errors import CorpusUnavailableError
-from reddit.core.protocols import LogFn
-from reddit.core.utils import dump_object
+from reddit.core.utils import dump_object, now
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
+    from reddit.core.config import Config, LabelsConfig
+    from reddit.core.protocols import LogFn
 
 # Lowercase: these interpolate into the on-disk corpus filenames, which are
 # lowercase; the previous "Economics" resolved only on case-insensitive mounts.
@@ -52,6 +58,22 @@ from reddit.core.utils import dump_object
 # Marcucci & Tafani, "Reddit's 'pulse' on US inflation", Banca d'Italia QEF
 # 1028, June 2026) — r/Economics, r/economy and r/wallstreetbets.
 SUBREDDITS = ["economy", "economics", "wallstreetbets"]
+
+# Rows per chunk when reloading the JSONL dump in `_load_dump`. Bounds the
+# transient parsing overhead; the final frame is still built whole because the
+# answers-file merge needs it whole.
+DUMP_CHUNK_ROWS = 200_000
+
+# The answers file is a shared read-modify-write target: two `reddit` processes
+# labelling different models of the same family (the documented way to split
+# work across GPUs) both read it, merge their own columns in and write it back,
+# the second writer silently dropping the first one's columns. The atomic
+# rename in `update_answers` protects against a torn file, not against that
+# lost update, so the whole read-merge-write runs under `_answers_lock`.
+# A merge of a multi-million-row CSV takes minutes; a lock older than the
+# timeout belongs to a process that died without releasing it.
+ANSWERS_LOCK_TIMEOUT = 30 * 60  # seconds
+ANSWERS_LOCK_POLL = 1.0  # seconds between acquisition attempts
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +98,8 @@ class CorpusJob:
         answer_file: Filename of the consolidated answers CSV (under
             ``results_dir``) that new label/trend columns are merged into.
         dump_file: Path of the crash-safety JSONL dump accumulated during
-            batched inference (see :func:`predict_corpus`).
+            batched inference and removed once the labelled CSV is written
+            (see :func:`predict_corpus`).
         label_col: Output column name for the decoded label string
             (e.g. ``"down"``/``"neutral"``/``"up"``).
         trend_col: Output column name for the decoded trend encoding
@@ -113,6 +136,61 @@ class CorpusJob:
     family_suffix: str | None = None
 
 
+@contextmanager
+def _answers_lock(target: Path) -> Generator[None, None, None]:
+    """Hold ``<target>.lock/`` for the duration of the block.
+
+    A lock *directory*: ``mkdir`` is atomic on every filesystem this project
+    runs on, network mounts included, where ``fcntl`` locks are not reliable.
+    Waits :data:`ANSWERS_LOCK_POLL` seconds between attempts, breaks a lock
+    older than :data:`ANSWERS_LOCK_TIMEOUT` (its owner has died), and gives
+    up after the same timeout. Breaking a stale lock is not itself atomic:
+    two waiters that judge the same lock stale at the same instant can, in
+    a millisecond window, remove each other's fresh lock — an accepted
+    residual risk given it needs a crashed process *and* two simultaneous
+    waiters.
+
+    Args:
+        target: The answers file the lock guards.
+
+    Raises:
+        TimeoutError: the lock stayed held by a live process for longer than
+            :data:`ANSWERS_LOCK_TIMEOUT`.
+
+    Notes:
+        Creates and removes ``<target>.lock/`` (I/O); writes an ``owner``
+        file inside it naming the holder, for diagnosis only.
+    """
+    lock_dir = target.with_name(target.name + ".lock")
+    deadline = time.monotonic() + ANSWERS_LOCK_TIMEOUT
+    while True:
+        try:
+            lock_dir.mkdir()
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock_dir.stat().st_mtime
+            except FileNotFoundError:
+                continue  # released between our mkdir and stat: retry at once
+            if age > ANSWERS_LOCK_TIMEOUT:
+                logging.warning("Breaking stale answers lock `%s` (%.0f s old).", lock_dir, age)
+                rmtree(lock_dir, ignore_errors=True)
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Could not acquire the answers-file lock `{lock_dir}` within {ANSWERS_LOCK_TIMEOUT:.0f} s; "
+                    f"another labelling process is merging into `{target.name}`. This run's labelled CSV is "
+                    f"already saved, so re-run the merge once the lock is released."
+                ) from None
+            time.sleep(ANSWERS_LOCK_POLL)
+    try:
+        with suppress(OSError):  # diagnostics only; the lock is the directory itself
+            (lock_dir / "owner").write_text(f"pid={os.getpid()} since={now()}\n", encoding="utf-8")
+        yield
+    finally:
+        rmtree(lock_dir, ignore_errors=True)
+
+
 def update_answers(output_file: Path, df_labelled: DataFrame, job: CorpusJob) -> None:
     """Merge new label/trend columns into the consolidated answers CSV.
 
@@ -132,19 +210,35 @@ def update_answers(output_file: Path, df_labelled: DataFrame, job: CorpusJob) ->
 
     Raises:
         CorpusUnavailableError: the answers file to merge into does not exist.
+        TimeoutError: another process held the answers-file lock for longer
+            than :data:`ANSWERS_LOCK_TIMEOUT` (see :func:`_answers_lock`).
 
     Notes:
-        Reads and rewrites the target CSV (I/O). The write is atomic: the
-        merged frame is written to a sibling ``.tmp`` file and moved into
-        place with ``os.replace``, so a crash mid-write cannot corrupt the
-        previously accumulated answers file.
+        Reads and rewrites the target CSV (I/O) under ``<target>.lock/``, so
+        concurrent ``reddit`` processes labelling different models of the
+        same family serialise their merges instead of overwriting each
+        other's columns. The write is atomic: the merged frame is written
+        to a sibling ``.tmp`` file and moved into place with ``os.replace``,
+        so a crash mid-write cannot corrupt the previously accumulated
+        answers file.
     """
     if job.family_suffix:
         target = output_file.parent / f"{output_file.stem}_{job.family_suffix}{output_file.suffix}"
-        source = target if target.exists() else output_file
     else:
-        target = source = output_file
+        target = output_file
 
+    with _answers_lock(target):
+        _merge_into_answers(output_file, target, df_labelled, job)
+
+
+def _merge_into_answers(output_file: Path, target: Path, df_labelled: DataFrame, job: CorpusJob) -> None:
+    """The read-merge-write of :func:`update_answers`; call it holding the lock.
+
+    The source is resolved *inside* the lock: two first runs of a family
+    that both saw the per-family copy missing would otherwise both seed it
+    from the base file, and the second would overwrite the first.
+    """
+    source = target if target.exists() else output_file
     if not source.exists():
         raise CorpusUnavailableError(
             f"The consolidated answers file `{source}` does not exist. It is expected to "
@@ -197,8 +291,11 @@ def process_batch(
 
     Returns:
         One ``{job.label_col: <str>, job.trend_col: <int>}`` dict per input
-        text, in order, decoded via ``labels.id2label``/``labels.encodings``
-        (``"unknown"`` for any id absent from either mapping).
+        text, in order, decoded via ``labels.id2label``/``labels.encodings``.
+        An id absent from the mapping (a checkpoint with more heads than
+        declared labels) decodes to label ``"unknown"`` and trend ``None``,
+        so the trend column stays numeric rather than turning into a mixed
+        int/str object column.
 
     Notes:
         Runs under ``torch.inference_mode()``; no gradients are tracked.
@@ -222,7 +319,7 @@ def process_batch(
     results: list[dict[str, Any]] = []
     for idx in predicted_indices:
         label = id2label.get(int(idx), "unknown")
-        trend = encodings.get(label, "unknown")
+        trend = encodings.get(label)
         results.append({job.label_col: label, job.trend_col: trend})
     return results
 
@@ -251,14 +348,41 @@ def _prepare_model_device(model: Any, job: CorpusJob) -> torch.device:
     return cast(torch.device, next(model.parameters()).device)
 
 
+def _assemble_records(df_batch: DataFrame, batch_results: list[dict[str, Any]], job: CorpusJob) -> DataFrame:
+    """Attach one batch's label/trend columns to its input rows.
+
+    Vectorized assembly: ``iterrows`` built one Series per corpus row, which
+    is the slowest way pandas offers. Rows beyond ``len(batch_results)`` are
+    dropped, so a short prediction list can never misalign the join keys.
+
+    Args:
+        df_batch: The input rows of this batch (join keys plus text).
+        batch_results: One ``{label_col, trend_col}`` dict per row, in order.
+        job: Supplies the column names and ``keep_text``.
+
+    Returns:
+        The labelled rows, with the text column dropped unless ``job.keep_text``.
+    """
+    n = min(len(df_batch), len(batch_results))
+    records = df_batch.iloc[:n]
+    if not job.keep_text:
+        records = records.drop(columns=[job.text_col], errors="ignore")
+    return records.assign(
+        **{
+            job.label_col: [r[job.label_col] for r in batch_results[:n]],
+            job.trend_col: [r[job.trend_col] for r in batch_results[:n]],
+        }
+    )
+
+
 def predict_corpus(model: Any, tokenizer: Any, config: Config, job: CorpusJob, *, log: LogFn) -> None:
     """Label every subreddit CSV, dumping each batch to JSONL for crash-safety.
 
     Subreddits are streamed one at a time — only one subreddit's frame is in
-    memory during inference — and every batch is appended to the JSONL dump as
-    it completes.  After all batches, the dump is reloaded once, the labelled
-    table written to ``labels_dir``, then merged into the answers CSV via
-    :func:`update_answers`.
+    memory during inference — and every batch is appended (and flushed) to
+    the JSONL dump as it completes.  After all batches, the dump is reloaded
+    once, the labelled table written to ``labels_dir``, then merged into the
+    answers CSV via :func:`update_answers`.
 
     Args:
         model: Trained classification model (LLM or BERT checkpoint).
@@ -273,94 +397,114 @@ def predict_corpus(model: Any, tokenizer: Any, config: Config, job: CorpusJob, *
         skipped rather than aborting the whole run: a missing or malformed
         ``r/{subreddit}`` CSV skips only that subreddit, and a batch
         exception skips only that batch. Reads one corpus CSV per
-        subreddit and writes/reloads ``job.dump_file`` (JSONL). Delegates
-        final persistence to :func:`_persist_labels`.
+        subreddit and writes/reloads ``job.dump_file`` (JSONL); the dump is
+        truncated at the start of the run, held open for its duration and
+        deleted once the labelled CSV is on disk. Delegates final
+        persistence to :func:`_persist_labels`.
     """
-    # Start from an empty dump. Appending to a previous run's records would
-    # duplicate join keys and multiply rows in the merge performed below.
-    job.dump_file.write_bytes(b"")
-
     device = _prepare_model_device(model, job)
 
     processed_count = 0
-    for reddit in SUBREDDITS:
-        logging.info(f"Loading r/{reddit}...")
-        # A missing or malformed subreddit CSV skips that subreddit only, like
-        # every other per-item failure here — one absent file must not abort
-        # the labelling of the remaining subreddits.
-        try:
-            df_reddit = read_csv(config.paths.reddit_dir / job.csv_format.format(reddit), low_memory=False)
-            df_reddit = df_reddit.loc[df_reddit[job.text_col].notna(), [*job.cols, job.text_col]]
-        except Exception as e:
-            log(f"Could not load the r/{reddit} corpus: {e}", level="error")
-            logging.error(f"Could not load the r/{reddit} corpus: {e}", exc_info=True)
-            continue
-        log(f"r/{reddit}: {len(df_reddit):,d} texts to be labelled", level="info")
-
-        for i in tqdm(range(0, len(df_reddit), job.batch_size), desc=f"{job.desc} [r/{reddit}]"):
-            df_batch = df_reddit.iloc[i : i + job.batch_size]
-            batch_texts = df_batch[job.text_col].tolist()
-
+    # Opened once, in write mode: appending to a previous run's records would
+    # duplicate join keys and multiply rows in the merge performed below, and
+    # re-opening the file for every batch cost one open/close round-trip per
+    # batch — tens of thousands per model on a network mount.
+    with open(job.dump_file, "wb") as dump:
+        for reddit in SUBREDDITS:
+            logging.info("Loading r/%s...", reddit)
+            # A missing or malformed subreddit CSV skips that subreddit only,
+            # like every other per-item failure here — one absent file must
+            # not abort the labelling of the remaining subreddits.
             try:
-                batch_results = process_batch(
-                    texts=batch_texts,
-                    model=model,
-                    tokenizer=tokenizer,
-                    labels=config.labels,
-                    device=device,
-                    job=job,
-                )
-                # Vectorized assembly: `iterrows` built one Series per corpus
-                # row, which is the slowest way pandas offers to do this.
-                n = min(len(df_batch), len(batch_results))
-                records = df_batch.iloc[:n]
-                if not job.keep_text:
-                    records = records.drop(columns=[job.text_col], errors="ignore")
-                records = records.assign(
-                    **{
-                        job.label_col: [r[job.label_col] for r in batch_results[:n]],
-                        job.trend_col: [r[job.trend_col] for r in batch_results[:n]],
-                    }
-                )
-                with open(job.dump_file, "ab") as f:
-                    f.writelines(
+                df_reddit = read_csv(config.paths.reddit_dir / job.csv_format.format(reddit), low_memory=False)
+                df_reddit = df_reddit.loc[df_reddit[job.text_col].notna(), [*job.cols, job.text_col]]
+            except Exception as e:
+                log(f"Could not load the r/{reddit} corpus: {e}", level="error")
+                logging.exception("Could not load the r/%s corpus", reddit)
+                continue
+            log(f"r/{reddit}: {len(df_reddit):,d} texts to be labelled", level="info")
+
+            for i in tqdm(range(0, len(df_reddit), job.batch_size), desc=f"{job.desc} [r/{reddit}]"):
+                df_batch = df_reddit.iloc[i : i + job.batch_size]
+                batch_texts = df_batch[job.text_col].tolist()
+
+                try:
+                    batch_results = process_batch(
+                        texts=batch_texts,
+                        model=model,
+                        tokenizer=tokenizer,
+                        labels=config.labels,
+                        device=device,
+                        job=job,
+                    )
+                    records = _assemble_records(df_batch, batch_results, job)
+                    dump.writelines(
                         # Rationale: to_dict(orient="records") types keys as
                         # Hashable; these frames have string column names.
                         dump_object(cast("dict[str, object]", output_record))
                         for output_record in records.to_dict(orient="records")
                     )
-                processed_count += n
+                    # Crash-safety: hand the batch to the OS now rather than
+                    # when the buffer happens to fill.
+                    dump.flush()
+                    processed_count += len(records)
 
-            except Exception as e:
-                log(f"An error occurred in r/{reddit} batch starting at index {i}: {e}", level="critical")
-                logging.critical(f"An error occurred in r/{reddit} batch starting at index {i}: {e}", exc_info=True)
+                except Exception as e:
+                    log(f"An error occurred in r/{reddit} batch starting at index {i}: {e}", level="critical")
+                    logging.critical(
+                        "An error occurred in r/%s batch starting at index %s: %s", reddit, i, e, exc_info=True
+                    )
 
-        del df_reddit
-        gc.collect()
+            del df_reddit
+            gc.collect()
 
     torch.cuda.empty_cache()
     log(f"{processed_count:,d} texts successfully labelled", level="success")
-    logging.debug(f"Dumped {processed_count:,d} predictions to {job.dump_file}")
+    logging.debug("Dumped %s predictions to %s", f"{processed_count:,d}", job.dump_file)
 
     _persist_labels(config, job, log=log)
+
+
+def _load_dump(path: Path) -> DataFrame:
+    """Reload a JSONL dump into one frame, chunk by chunk.
+
+    Replaces ``DataFrame([json.loads(line) for line in f])``, which held the
+    whole corpus as a list of Python dicts — several times the size of the
+    resulting frame — before pandas ever saw it. ``dtype=False`` and
+    ``convert_dates=False`` keep every column exactly as the JSON parser
+    typed it (integers as ``int64``, everything else as ``object``), which
+    is what the per-line reload produced, so the join keys reach
+    :func:`update_answers` unchanged.
+
+    Args:
+        path: The JSONL dump written by :func:`predict_corpus`.
+
+    Returns:
+        One frame with every record, or an empty frame for an empty dump.
+    """
+    chunks = list(read_json(path, lines=True, dtype=False, convert_dates=False, chunksize=DUMP_CHUNK_ROWS))
+    return concat(chunks, ignore_index=True) if chunks else DataFrame()
 
 
 def _persist_labels(config: Config, job: CorpusJob, *, log: LogFn) -> None:
     """Reload the JSONL dump, save the labelled table and update the answers.
 
-    Reloads ``job.dump_file`` into a single frame, then persists it in two
-    independent, separately-guarded steps so a failure in the second (the
-    answers-file merge) cannot discard the first (the standalone labelled
-    CSV, the expensive artifact of the run): see :func:`update_answers`.
+    Reloads ``job.dump_file`` into a single frame (:func:`_load_dump`), then
+    persists it in two independent, separately-guarded steps so a failure in
+    the second (the answers-file merge) cannot discard the first (the
+    standalone labelled CSV, the expensive artifact of the run): see
+    :func:`update_answers`. The dump exists to survive a crash before the
+    labelled CSV is written; once that CSV is on disk it is deleted — one
+    full-corpus JSONL per model and method adds up on a shared mount. A
+    failed CSV write keeps it.
     """
     df_labelled = DataFrame()
     try:
-        with open(job.dump_file, "r", encoding="utf-8") as f:
-            df_labelled = DataFrame([json.loads(line) for line in f])
+        df_labelled = _load_dump(job.dump_file)
         log(f"{len(df_labelled):,d} labels successfully loaded", level="success")
     except Exception as e:
         log(f"Could not read the dump file: {e}", level="error")
-        logging.error(f"Could not read the dump file: {e}", exc_info=True)
+        logging.exception("Could not read the dump file")
 
     if not df_labelled.empty:
         # The labelled table is the expensive artifact of this run: persist it
@@ -372,14 +516,16 @@ def _persist_labels(config: Config, job: CorpusJob, *, log: LogFn) -> None:
             log(f"Output successfully saved into `{output_path.name}`", level="success")
         except Exception as e:
             log(f"Could not save the labelled output: {e}", level="error")
-            logging.error(f"Could not save the labelled output: {e}", exc_info=True)
+            logging.exception("Could not save the labelled output")
+        else:
+            job.dump_file.unlink(missing_ok=True)
 
         try:
             update_answers(config.paths.results_dir / job.answer_file, df_labelled, job)
             log("Answers successfully updated", level="success")
         except Exception as e:
             log(f"Could not update the answers file: {e}", level="error")
-            logging.error(f"Could not update the answers file: {e}", exc_info=True)
+            logging.exception("Could not update the answers file")
 
     del df_labelled
     gc.collect()

@@ -22,7 +22,7 @@ from functools import partial
 from itertools import product
 from shutil import rmtree
 from time import monotonic_ns
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from peft import get_peft_model, prepare_model_for_kbit_training
@@ -36,16 +36,18 @@ from transformers import (
     TrainingArguments,
 )
 
-from reddit.core.config import Config, Models, ModelSpec
 from reddit.core.errors import UnsupportedMethodError
 from reddit.core.logging import print_log
-from reddit.core.protocols import Labeller, LogFn
 from reddit.core.utils import archive_model, clear_hf_cache, fmt_td
-from reddit.data.preparation import DataBundle
 from reddit.modeling.loading import LLM_MAX_LENGTH, llm_model_args
 from reddit.modeling.peft import peft_config
 from reddit.training.loop import SeedContext, run_seeds
 from reddit.training.selection import select_median
+
+if TYPE_CHECKING:
+    from reddit.core.config import Config, Models, ModelSpec
+    from reddit.core.protocols import Labeller, LogFn
+    from reddit.data.preparation import DataBundle
 
 
 class LlmSeedStrategy:
@@ -100,7 +102,17 @@ class LlmSeedStrategy:
         model = AutoModelForSequenceClassification.from_pretrained(
             ctx.model.id, config=model_conf, cache_dir=ctx.hf_cache, **llm_model_args()
         )
-        model = prepare_model_for_kbit_training(model)
+        # `prepare_model_for_kbit_training` enables gradient checkpointing on
+        # its own (and registers the input-grad hook reentrant checkpointing
+        # needs) unless told otherwise, so the knob must reach it as well as
+        # `TrainingArguments`: the Trainer only ever switches checkpointing
+        # *on*, never off.
+        checkpointing = ctx.config.training.gradient_checkpointing
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": True} if checkpointing else None,
+        )
         model = get_peft_model(model, peft_config[ctx.finetuning_method])
         # Rationale: PeftModel proxies `config` to the wrapped transformer;
         # its declared attribute type is too narrow for this assignment.
@@ -121,7 +133,7 @@ class LlmSeedStrategy:
         """
         try:
             return model.get_nb_trainable_parameters()
-        except Exception:
+        except Exception:  # noqa: BLE001 — counts are informational; never worth failing a seed over
             return None, None
 
     def tokenize(self, ctx: SeedContext, bundle: DataBundle) -> Any:
@@ -132,13 +144,19 @@ class LlmSeedStrategy:
             bundle: Prepared gold dataset with a ``"text"`` column.
 
         Returns:
-            The tokenized ``DatasetDict``, with the raw ``"text"`` column
+            The tokenized ``DatasetDict``, truncated to
+            :data:`reddit.modeling.loading.LLM_MAX_LENGTH` (the length
+            inference truncates at too), with the raw ``"text"`` column
             dropped and tensors returned in torch format.
         """
         tokenizer = ctx.tokenizer
 
         def tokenize_batch(examples):
-            return tokenizer(examples["text"], truncation=True)
+            # `max_length` must be given per call: passing it to
+            # `AutoTokenizer.from_pretrained` only parks it in `init_kwargs`,
+            # which left training truncating at the model's own limit (8k+)
+            # while inference truncated at LLM_MAX_LENGTH.
+            return tokenizer(examples["text"], truncation=True, max_length=LLM_MAX_LENGTH)
 
         tokenized = bundle.dataset.map(tokenize_batch, batched=True, desc="Tokenizing dataset")
         tokenized = tokenized.remove_columns(["text"])
@@ -169,8 +187,10 @@ class LlmSeedStrategy:
             ``config.training.arguments``.
 
         Notes:
-            Uses a cosine learning-rate schedule and gradient checkpointing
-            (reentrant) to fit the quantized model's memory budget.
+            Uses a cosine learning-rate schedule; gradient checkpointing
+            (reentrant) follows ``config.training.gradient_checkpointing``
+            and must agree with what :meth:`build_model` told
+            ``prepare_model_for_kbit_training``.
         """
         training = ctx.config.training
         return TrainingArguments(
@@ -180,18 +200,18 @@ class LlmSeedStrategy:
             lr_scheduler_type="cosine",
             num_train_epochs=training.num_train_epochs,
             gradient_accumulation_steps=training.gradient_accumulation_steps,
-            gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": True},
+            gradient_checkpointing=training.gradient_checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": True} if training.gradient_checkpointing else None,
             **training.arguments.model_dump(),
         )
 
     def optimizers(self, ctx: SeedContext, model: Any) -> tuple[Any, Any]:
-        """Build the LoRA+ optimizer that completes the QDoRA+/xQDoRA+ recipe.
+        r"""Build the LoRA+ optimizer that completes the QDoRA+/xQDoRA+ recipe.
 
         Constructs an ``AdamW`` optimizer with decoupled weight decay under
         the LoRA+ asymmetric learning-rate scheme: the low-rank adapter's
         ``B`` matrix is trained at ``loraplus_lr_ratio`` times the base
-        learning rate applied to ``A`` (:math:`\\eta_B = 5 \\cdot \\eta_A`),
+        learning rate applied to ``A`` (:math:`\eta_B = 5 \cdot \eta_A`),
         which the LoRA+ paper shows more effectively balances the two
         matrices' contributions during PEFT fine-tuning.
 
@@ -233,8 +253,29 @@ def run_model(
 ) -> bool:
     """Train one model with one method, select the median seed, optionally label the corpus.
 
+    Args:
+        config: Project configuration.
+        models: The resolved family selection ``model`` belongs to.
+        model: The specific model spec (name + hub id) being fine-tuned.
+        finetuning_method: ``"qdora"`` or ``"xqdora"``.
+        log: Human-oriented progress logger for this run.
+        seeds: Split seeds to iterate over (see :class:`reddit.training.loop.SeedContext`).
+        labeller: Injected corpus-labelling step, run on the selected
+            checkpoint; ``None`` skips labelling.
+
     Returns:
         ``True`` when a median checkpoint was selected, ``False`` otherwise.
+
+    Notes:
+        Downloads/reads the base checkpoint from the Hugging Face Hub cache
+        and creates the per-run cache directory (I/O); archives the
+        selected checkpoint (:func:`reddit.core.utils.archive_model`) and
+        removes the per-run training cache at the end of the run, whether
+        or not a checkpoint was selected and whether or not labelling failed
+        (not in a ``finally`` block, so an exception that escapes earlier
+        leaves it on disk). The downloaded base weights under ``hf_cache``
+        are left for :func:`run_family` to clear once every method for this
+        model has run.
     """
     run_name = f"{model.name}_{finetuning_method}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -246,14 +287,7 @@ def run_model(
     log(f"Preparing for `{finetuning_method}`...")
     t1 = monotonic_ns()
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model.id,
-        truncation=True,
-        max_length=LLM_MAX_LENGTH,
-        padding="max_length",
-        use_fast=True,
-        cache_dir=hf_cache,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model.id, use_fast=True, cache_dir=hf_cache)
     tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
     tokenizer.padding_side = "left"
 
@@ -301,13 +335,21 @@ def run_model(
                 f"Something unexpected occurred in the inference process: {e}\n{traceback.format_exc()}",
                 level="critical",
             )
-            logging.critical(f"Something unexpected occurred in the inference process: {e}", exc_info=True)
+            logging.critical("Something unexpected occurred in the inference process: %s", e, exc_info=True)
         log(f"Inference via `{finetuning_method}`... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
     log("Cleaning up...")
     t1 = monotonic_ns()
-    if median_model is not None:
-        archive_model(median_model, str(median_model))
+    if median_model is not None and not archive_model(median_model, str(median_model)):
+        # The checkpoint itself is safe (a failed zip never deletes it), but
+        # `reddit predict` scans for `*.zip` archives only, so an unarchived
+        # directory is invisible to it until zipped by hand.
+        message = (
+            f"Selected checkpoint `{median_model.name}` could not be archived and is left unzipped at "
+            f"`{median_model}`; `reddit predict` will not find it until it is zipped by hand."
+        )
+        log(message, level="error")
+        logging.error(message)
     # Only the per-run training cache is dropped here. The downloaded weights
     # live under `hf_cache` and are shared by every fine-tuning method of this
     # model; `run_family` clears them once the last method has finished, which
@@ -316,6 +358,29 @@ def run_model(
     log(f"Cleaning up... done: it took {fmt_td(monotonic_ns() - t1)}.")
 
     return median_model is not None
+
+
+def validate_methods(models: Models) -> None:
+    """Check that every declared fine-tuning method has a PEFT recipe.
+
+    Called by :func:`run_family` and, earlier, by the ``run``/``train`` task
+    for every selected LLM family *before* any training starts — so a typo
+    in the last family of ``--family a b c`` no longer surfaces only after
+    families ``a`` and ``b`` have trained for hours.
+
+    Args:
+        models: The resolved family selection to check.
+
+    Raises:
+        UnsupportedMethodError: a declared method has no entry in
+            :data:`reddit.modeling.peft.peft_config`.
+    """
+    unsupported = [m for m in models.finetuning_methods if m not in peft_config]
+    if unsupported:
+        raise UnsupportedMethodError(
+            f"No PEFT configuration registered for: {', '.join(unsupported)}. "
+            f"Available: {', '.join(sorted(peft_config))}."
+        )
 
 
 def run_family(
@@ -337,21 +402,17 @@ def run_family(
         The number of (model, method) runs that produced a selected checkpoint.
 
     Raises:
-        UnsupportedMethodError: a declared method has no PEFT configuration.
+        UnsupportedMethodError: a declared method has no PEFT configuration
+            (see :func:`validate_methods`).
     """
-    logging.info(f"Found {torch.cuda.device_count()} GPUs available for the pool.")
-    logging.info(f"Found {len(models.models)} models in the config to train.")
+    logging.info("Found %s GPUs available for the pool.", torch.cuda.device_count())
+    logging.info("Found %s models in the config to train.", len(models.models))
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
+    validate_methods(models)
     methods = models.finetuning_methods
-    unsupported = [m for m in methods if m not in peft_config]
-    if unsupported:
-        raise UnsupportedMethodError(
-            f"No PEFT configuration registered for: {', '.join(unsupported)}. "
-            f"Available: {', '.join(sorted(peft_config))}."
-        )
 
     seeds = tuple(config.training.seeds[:limit] if limit > 0 else config.training.seeds)
 
@@ -359,7 +420,7 @@ def run_family(
     t1_run = monotonic_ns()
 
     n_methods = len(methods)
-    logging.info(f"Found {n_methods:,d} fine-tuning methods to apply.")
+    logging.info("Found %s fine-tuning methods to apply.", f"{n_methods:,d}")
     track_trained_models: dict[str, set[str]] = {m.name: set() for m in models.models}
     selected = 0
 
@@ -376,7 +437,7 @@ def run_family(
 
         track_trained_models[model.name].add(finetuning_method)
         if len(track_trained_models[model.name]) == n_methods:
-            logging.info(f"All the finetuning methods for `{model.name}` have been run. Cleaning from memory...")
+            logging.info("All the finetuning methods for `%s` have been run. Cleaning from memory...", model.name)
             clear_hf_cache(
                 model.id,
                 extra_cache_dirs=[config.environment.hf_home] if config.environment.hf_home else None,
@@ -384,11 +445,11 @@ def run_family(
             rmtree(config.hf_home / model.name, ignore_errors=True)
             track_trained_models.pop(model.name)
             gc.collect()
-            logging.info(f"All the finetuning methods for `{model.name}` have been run. Cleaning from memory... done.")
+            logging.info("All the finetuning methods for `%s` have been run. Cleaning from memory... done.", model.name)
 
         t2 = monotonic_ns()
         log(f"Running `{model.name}-{finetuning_method}`... done: it took {fmt_td(t2 - t1)}.\n", level=None)
         log(f"Elapsed time since the job was launched: {fmt_td(t2 - t1_run)}.\n", level=None)
 
-    logging.info(f"Running ended. It took {fmt_td(monotonic_ns() - t1_run)}.")
+    logging.info("Running ended. It took %s.", fmt_td(monotonic_ns() - t1_run))
     return selected

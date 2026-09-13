@@ -25,6 +25,7 @@ from reddit.core.config import (
     DatasetConfig,
     EnvironmentConfig,
     Family,
+    HubConfig,
     InferenceConfig,
     LabelsConfig,
     Models,
@@ -85,7 +86,7 @@ class TestConfigModule:
 
         def test_every_section_is_frozen(self, project_config: Config) -> None:
             with pytest.raises(ValidationError):
-                project_config.training.seeds = []  # pyright: ignore[reportAttributeAccessIssue]
+                project_config.training.seeds = []
 
         @pytest.mark.parametrize(
             ("section", "field", "value"),
@@ -296,7 +297,7 @@ class TestConfigModule:
             models = config.family("llm_family")
 
             with pytest.raises(ValidationError):
-                models.family = "other"  # pyright: ignore[reportAttributeAccessIssue]
+                models.family = "other"
 
         def test_unknown_family_raises_unknown_family_error(self, config: Config) -> None:
             with pytest.raises(UnknownFamilyError):
@@ -439,6 +440,31 @@ class TestConfigModule:
             assert arguments.eval_strategy == "epoch"
             assert arguments.save_total_limit == 2
 
+        def test_gradient_checkpointing_defaults_on_as_the_pipeline_always_had_it(self) -> None:
+            assert TrainingConfig(seeds=[1]).gradient_checkpointing is True
+
+        def test_the_fixed_seed_is_pinned_to_42(self) -> None:
+            """Explicit, so a transformers default change cannot alter the protocol."""
+            assert ArgumentsConfig().seed == 42
+            assert "seed" in ArgumentsConfig().model_dump()
+
+        def test_no_experiment_tracker_is_spelled_none_not_null(self) -> None:
+            """transformers 5 wraps `None` as `[None]` and the Trainer then rejects it."""
+            assert ArgumentsConfig().report_to == "none"
+            assert ArgumentsConfig(report_to=None).report_to == "none"  # pyright: ignore[reportArgumentType]
+
+        @pytest.mark.parametrize("report_to", ["tensorboard", ["mlflow", "wandb"], "all"])
+        def test_a_named_experiment_tracker_passes_through(self, report_to: str | list[str]) -> None:
+            assert ArgumentsConfig(report_to=report_to).report_to == report_to
+
+        def test_a_null_report_to_in_yaml_is_coerced(
+            self, raw_config: dict[str, Any], write_config: Callable[..., Path]
+        ) -> None:
+            """Older config files spell "no tracker" as `report_to: null`."""
+            raw_config["training"]["arguments"] = {"fp16": False, "report_to": None}
+
+            assert load_config(write_config(raw_config)).training.arguments.report_to == "none"
+
         def test_an_unsupported_performance_metric_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 ArgumentsConfig(metric_for_best_model="auc")  # pyright: ignore[reportArgumentType]
@@ -446,6 +472,37 @@ class TestConfigModule:
         def test_an_unsupported_evaluation_strategy_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 ArgumentsConfig(eval_strategy="batch")  # pyright: ignore[reportArgumentType]
+
+        def test_bf16_and_fp16_cannot_both_be_enabled(self) -> None:
+            """Two independent booleans made the illegal state representable."""
+            with pytest.raises(ValidationError, match="mutually exclusive"):
+                ArgumentsConfig(bf16=True, fp16=True)
+
+        @pytest.mark.parametrize(("bf16", "fp16"), [(True, False), (False, True), (False, False)])
+        def test_any_other_precision_combination_is_accepted(self, bf16: bool, fp16: bool) -> None:
+            arguments = ArgumentsConfig(bf16=bf16, fp16=fp16)
+
+            assert (arguments.bf16, arguments.fp16) == (bf16, fp16)
+
+        @pytest.mark.parametrize(("content", "found"), [("", "nothing"), ("- a\n- b\n", "a list"), ("42\n", "a int")])
+        def test_a_config_that_is_not_a_mapping_is_a_config_error(
+            self, tmp_path: Path, content: str, found: str
+        ) -> None:
+            """Previously escaped as a raw ``AttributeError`` from the path resolution."""
+            config_path = tmp_path / "config.yml"
+            config_path.write_text(content, encoding="utf-8")
+
+            with pytest.raises(ConfigError, match=f"expected a mapping at the top level, found {found}"):
+                load_config(config_path)
+
+        def test_an_undeclared_key_is_rejected_rather_than_silently_dropped(
+            self, config_factory: Callable[..., Config], raw_config: dict[str, Any]
+        ) -> None:
+            """`gradient_checkpointing` under `training.arguments` used to be accepted and ignored."""
+            arguments = {**raw_config["training"]["arguments"], "gradient_checkpointing": False}
+
+            with pytest.raises(ConfigError, match="gradient_checkpointing"):
+                config_factory(training={**raw_config["training"], "arguments": arguments})
 
         def test_unknown_finetuning_method_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
@@ -611,6 +668,7 @@ class TestConfigModule:
 
             assert config.training.seeds == seeds
 
+        @settings(deadline=None)  # building a full Config per example trips the 200 ms deadline on a loaded box
         @given(name=st.text(min_size=1, max_size=12).filter(lambda s: s not in {"llm", "bert"}))
         def test_every_unknown_family_name_raises_a_config_error(self, name: str) -> None:
             config = Config(
@@ -626,3 +684,32 @@ class TestConfigModule:
 
             with pytest.raises(ConfigError):
                 config.family(name)
+
+
+class TestHubConfig:
+    """Repository naming for `reddit upload`."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_the_default_template_joins_model_and_method(self) -> None:
+            assert (
+                HubConfig(namespace="acme").repo_id("qwen2.5_0.5b", "qdora") == "acme/reddit-pulse-qwen2.5_0.5b-qdora"
+            )
+
+        def test_an_encoder_has_no_method_in_its_name(self) -> None:
+            assert HubConfig(namespace="acme").repo_id("inflabert", "-") == "acme/reddit-pulse-inflabert"
+
+        def test_the_template_can_use_model_and_method_separately(self) -> None:
+            hub = HubConfig(namespace="acme", repo_name="{method}--{model}")
+
+            assert hub.repo_id("gemma2_2b", "xqdora") == "acme/xqdora--gemma2_2b"
+
+        def test_without_a_namespace_naming_is_a_config_error(self) -> None:
+            with pytest.raises(ConfigError, match=r"hub\.namespace"):
+                HubConfig().repo_id("gemma2_2b", "qdora")
+
+        def test_repositories_are_private_by_default(self) -> None:
+            assert HubConfig().private is True
+
+        def test_no_collection_is_configured_by_default(self) -> None:
+            assert HubConfig().collection is None

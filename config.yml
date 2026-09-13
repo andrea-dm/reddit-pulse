@@ -48,6 +48,10 @@ training:
   learning_rate: 1.0e-4
   num_train_epochs: 40
   gradient_accumulation_steps: 8
+  # Activation recomputation is a memory-only trade (no numerical effect,
+  # ~1/3 slower steps). Off for the sub-3B cohort on the 80 GB A100s; turn
+  # it back on for the 9B/27B models on a small card.
+  gradient_checkpointing: false
   early_stopping_patience: 5
   # Full fine-tuning hyperparameters for `kind: bert` families. These were
   # hardcoded in training/bert.py; the values are unchanged.
@@ -57,18 +61,29 @@ training:
   # Splatted verbatim into `transformers.TrainingArguments`; every key must be
   # a valid constructor parameter for the installed transformers version.
   arguments:
+    # One fixed seed for model initialisation and the Trainer's own
+    # shuffling/dropout; the `seeds` list below varies the data split only.
+    seed: 42
     save_total_limit: 2
     save_on_each_node: false
-    report_to: null
+    report_to: none       # no experiment tracker; `null` is no longer accepted by transformers 5
     push_to_hub: false
     disable_tqdm: true
     # --- Performance ---
-    bf16: false
-    fp16: true            # mixed precision for faster training
+    # bf16 on the A100 target: matches the bfloat16 the decoder LLMs are
+    # loaded and de-quantized in (`reddit.modeling.loading`), needs no
+    # GradScaler, and Gemma-2 overflows under fp16 autocast. A Turing box
+    # (T4) has no native bf16: flip to `bf16: false` / `fp16: true` there
+    # (`run_seeds` refuses bf16 on such a device before any seed starts).
+    bf16: true
+    fp16: false
     per_device_train_batch_size: 64
     per_device_eval_batch_size: 64
     weight_decay: 0.01
-    dataloader_num_workers: 4
+    # One epoch is ~16 micro-batches of already-tokenized short titles;
+    # forking workers every epoch (and every evaluation) costs more than it
+    # saves.
+    dataloader_num_workers: 0
     dataloader_pin_memory: true
     # --- Strategy ---
     eval_strategy: epoch
@@ -83,25 +98,38 @@ training:
     - 477284336
     - 709964709
     - 1245093080
-    # - 1329496050
+    - 1329496050
     - 1361883482
     - 1389303030
     - 2078237541
-    # - 2565555162
+    - 2565555162
     - 2786505123
     # - 2923862602
     - 2928142788
     - 3144693271
     - 3154447144
-    # - 3266123502
+    - 3266123502
     - 4054871397
-    # - 4203596092
+    - 4203596092
     - 4280088979
 
 inference:
   batch_size: 64
   submissions: true
   comments: true
+
+# `reddit upload`: one Hub repository per selected checkpoint, named from the
+# template (`{slug}` is `{model}-{method}`, or just `{model}` for BERT):
+# `reddit-pulse-gemma2_2b-xqdora` and so on, next to the hand-published
+# `andreadm/reddit-pulse-bert`; each is added to the collection below. Needs
+# a token with write access: `HF_WRITE_TOKEN` in the dotenv (`HF_TOKEN` is the
+# read token training uses). Repositories are public like the reference
+# model; pass `--private` (or set it here) to review first.
+hub:
+  namespace: andreadm
+  private: false
+  repo_name: reddit-pulse-{slug}
+  collection: https://huggingface.co/collections/andreadm/reddit-infla-pulse
 
 # Model families, selected at the CLI with --family (or individual models
 # with --model). To split work across GPUs, run disjoint --model subsets per
@@ -121,13 +149,16 @@ families:
   llama:
     models:
       # - {name: llama3.1_8b, id: meta-llama/Llama-3.1-8B}
-      # - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
+      - {name: llama3.2_1b, id: meta-llama/Llama-3.2-1B}
       - {name: llama3.2_3b, id: meta-llama/Llama-3.2-3B}
   qwen:
     models:
       - {name: qwen2.5_7b, id: Qwen/Qwen2.5-7B}
       - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
       - {name: qwen2.5_1.5b, id: Qwen/Qwen2.5-1.5B}
+  # Smoke-test family. Its model is named distinctly from `qwen.qwen2.5_0.5b`
+  # (same checkpoint): `--model` rejects a name declared by two families, so
+  # sharing the name made `reddit train --model qwen2.5_0.5b` unusable.
   test:
     models:
-      - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
+      - {name: qwen2.5_0.5b_smoke, id: Qwen/Qwen2.5-0.5B}
