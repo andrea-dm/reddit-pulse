@@ -491,6 +491,15 @@ class TestConfigModule:
             with pytest.raises(ConfigError, match=f"expected a mapping at the top level, found {found}"):
                 load_config(config_path)
 
+        def test_an_undeclared_key_is_rejected_rather_than_silently_dropped(
+            self, config_factory: Callable[..., Config], raw_config: dict[str, Any]
+        ) -> None:
+            """`gradient_checkpointing` under `training.arguments` used to be accepted and ignored."""
+            arguments = {**raw_config["training"]["arguments"], "gradient_checkpointing": False}
+
+            with pytest.raises(ConfigError, match="gradient_checkpointing"):
+                config_factory(training={**raw_config["training"], "arguments": arguments})
+
         def test_unknown_finetuning_method_is_rejected(self) -> None:
             with pytest.raises(ValidationError):
                 Family(models=[], finetuning_methods=["magic"])  # pyright: ignore[reportArgumentType]

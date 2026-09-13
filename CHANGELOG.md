@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `config.yml` keys the schema does not declare are rejected at load time
+  (`extra="forbid"` on every section) instead of silently dropped: a
+  `gradient_checkpointing: false` under `training.arguments` used to be
+  accepted and ignored (`src/reddit/core/config.py`).
 - `setup_logging` raises `httpx`/`httpcore` (transitively used by
   `huggingface_hub` for every Hub request) to `WARNING`: one INFO-level
   line per `HEAD`/`GET` request was flooding both the console and the

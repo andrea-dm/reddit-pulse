@@ -35,7 +35,11 @@ type FineTuningMethod = Literal["qdora", "xqdora", "adalora", "-"]
 type PerformanceMetric = Literal["f1_weighted", "f1", "accuracy", "recall", "precision"]
 type ModelKind = Literal["llm", "bert"]
 
-_FROZEN = ConfigDict(frozen=True)
+# `extra="forbid"`: an unknown key anywhere in `config.yml` is a typo or a
+# setting that never reaches the pipeline (pydantic's default silently drops
+# it — `gradient_checkpointing: false` under `training.arguments` was accepted
+# and ignored). Failing at load time is the only moment it can be noticed.
+_FROZEN = ConfigDict(frozen=True, extra="forbid")
 
 
 def _expand(raw: str | Path) -> Path:
@@ -256,9 +260,11 @@ class ArgumentsConfig(BaseModel):
 
     Every field here must be an accepted ``TrainingArguments.__init__``
     parameter for the installed transformers version: the strategies splat
-    ``model_dump()`` straight into the constructor, and an unknown key raises
-    ``TypeError`` inside the per-seed loop, silently failing every seed.
+    ``model_dump()`` straight into the constructor, and a stale field raises
+    ``TypeError`` — caught once by :func:`reddit.training.loop._preflight`.
     (``overwrite_output_dir`` was dropped when transformers 5 removed it.)
+    Conversely a key declared in ``config.yml`` but *not* here is rejected
+    at load time (``extra="forbid"``) instead of being silently dropped.
     """
 
     model_config = _FROZEN

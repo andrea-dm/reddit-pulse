@@ -69,6 +69,9 @@ models = config.family("bert")  # resolved Models view for one family
   [Preparing the Gold Dataset](preparing-the-gold-dataset.md)).
 - **`training:`** — shared and per-kind (`bert:`) hyperparameters, seeds,
   and default `finetuning_methods`.
+- Every section is strict: a key the schema does not declare (a typo, or a
+  `TrainingArguments` field not listed in `ArgumentsConfig`) fails
+  `load_config` with a `ConfigError` instead of being silently ignored.
 - **`inference:`** — batch size and submissions/comments toggles for corpus
   labelling.
 - **`environment:`** — `HF_HOME`, dotenv path, `PYTORCH_CUDA_ALLOC_CONF`.
