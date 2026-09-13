@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-09-13
 
 ### Added
 
@@ -68,6 +68,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### Breaking changes
+
+- **Removed** `reddit.modeling.peft.quantization_config` (a module-level
+  `BitsAndBytesConfig` singleton, previously exported from
+  `reddit.modeling.__init__.__all__`). It is replaced by
+  `build_quantization_config(compute_dtype)`, so the 4-bit compute dtype
+  always matches the loaded weight dtype (the singleton was hardcoded to
+  `float16`, which under the `bfloat16` weights this release now loads by
+  default ran the compute dtype through emulation). **Migration:** replace
+  `from reddit.modeling import quantization_config` (or
+  `reddit.modeling.peft.quantization_config`) with
+  `from reddit.modeling import build_quantization_config`, then call
+  `build_quantization_config(compute_dtype)` with the dtype the base model
+  is loaded in (`src/reddit/modeling/peft.py`,
+  `src/reddit/modeling/__init__.py`).
+
 - `LICENSE.md` holds only the MIT license text, so GitHub detects the
   license; the paper's disclaimer (the views are the authors', the license
   covers the software only) moves to `NOTICE.md`, which ships in the
@@ -101,10 +117,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `%s`-style arguments, type-only imports live in `TYPE_CHECKING` blocks,
   overriding methods carry `@override`, `print_log` is table-driven, and
   `.github/utils/` is linted and type-checked too.
-- `reddit.modeling.peft.quantization_config` (a module-level singleton) is
-  replaced by `build_quantization_config(compute_dtype)`, so the 4-bit
-  compute dtype always matches the loaded weight dtype (previously fixed
-  at `float16` under `bfloat16` weights).
 - `bert_model_args` loads encoders in `float32`; mixed precision is left
   to the Trainer's `fp16`/`bf16` flag (fp16 autocast needs fp32 master
   weights, and the previous `bfloat16` weights kept the optimizer state at
