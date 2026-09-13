@@ -1,4 +1,4 @@
-# reddit
+# Reddit pulse
 
 Fine-tunes decoder LLMs (QDoRA+/xQDoRA+ PEFT on 4-bit bases) and BERT-family
 encoders as three-way **directional inflation-expectation classifiers**
@@ -73,6 +73,11 @@ reddit upload  --model gemma2_2b    --dry-run       # stage Hub repos under outp
 `config.yml`; `--all-families` (alias `--all-models`) runs everything.
 `--gpu` sets `CUDA_VISIBLE_DEVICES` — split a cohort across GPUs by giving
 each invocation a disjoint `--model` subset.
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md).
+
 
 ## Published models
 
