@@ -28,6 +28,7 @@ src/reddit/
   modeling/           # quantization + PEFT configs, metrics, weighted trainer
   training/           # multi-seed pipelines (llms, bert) + median selection
   inference/          # corpus labelling, checkpoint discovery (zip/dirs)
+  hub/                # model cards, staging and upload to the Hugging Face Hub
   tasks/              # CLI task modules (setup_*/execute_* pairs)
 data/                 # subreddit CSVs + labelled.xlsx gold set
 models/               # trained checkpoints ({model}_{method}_{seed}[.zip])

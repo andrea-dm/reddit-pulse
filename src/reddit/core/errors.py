@@ -57,3 +57,7 @@ class UndeclaredLabelError(ConfigError):
 
 class CorpusUnavailableError(RedditError):
     """A corpus or answers file required for labelling is missing."""
+
+
+class HubError(RedditError):
+    """Publishing a checkpoint to the Hugging Face Hub failed or cannot start."""

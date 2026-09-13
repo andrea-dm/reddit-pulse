@@ -10,10 +10,12 @@ Both are deliberate; they are not interchangeable.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
 from pathlib import Path
 from shutil import make_archive, rmtree
+from typing import Any, cast
 
 import orjson
 
@@ -65,6 +67,47 @@ def dump_object(d: dict[str, object]) -> bytes:
         return orjson.dumps(d) + b"\n"
     except orjson.JSONEncodeError as e:
         raise TypeError(f"Failed to encode to JSON: {e}") from e
+
+
+def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    """Parse every JSON object in a JSONL dump, newline-terminated or not.
+
+    Records written before :func:`dump_object` terminated each one with a
+    newline sit glued together on a single line (the 2025 metrics dumps and
+    the selection record both do), so a line-by-line parse rejects those
+    files. Decoding object after object from the raw text accepts both
+    layouts.
+
+    Args:
+        path: The JSONL file to read.
+
+    Returns:
+        Every record in file order; an empty list for an empty file.
+
+    Raises:
+        ValueError: the file is not valid JSONL.
+        TypeError: a record is a JSON value other than an object.
+
+    Notes:
+        Reads ``path`` from disk (I/O).
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    decoder = json.JSONDecoder()
+    records: list[dict[str, Any]] = []
+    position = 0
+    length = len(text)
+    while position < length:
+        if text[position].isspace():
+            position += 1
+            continue
+        try:
+            record, position = decoder.raw_decode(text, position)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"`{path}` is not a JSONL file: {e}") from e
+        if not isinstance(record, dict):
+            raise TypeError(f"`{path}` holds a non-object JSON value: {record!r}")
+        records.append(cast("dict[str, Any]", record))
+    return records
 
 
 def archive_model(model_path: str | Path, archive_name: str) -> bool:

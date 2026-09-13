@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `reddit.core.utils.read_jsonl`: parses JSONL dumps whether or not their
+  records are newline-terminated (the 2025 dumps glued records together).
+- `reddit.modeling.loading.adapter_base_model` and
+  `reddit.data.preparation.label_counts`.
 - `training.gradient_checkpointing` (default `true`, the previous
   hardcoded behaviour): reentrant activation checkpointing for decoder-LLM
   training, applied consistently to `peft.prepare_model_for_kbit_training`

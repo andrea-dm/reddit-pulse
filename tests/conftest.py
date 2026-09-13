@@ -45,6 +45,8 @@ if find_spec("torch") is None:
     collect_ignore += ["inference", "modeling", "training", "tasks"]
 if find_spec("datasets") is None or find_spec("sklearn") is None:
     collect_ignore += ["data"]
+if find_spec("huggingface_hub") is None:
+    collect_ignore += ["hub"]
 
 PATH_KEYS = (
     "reddit_dir",

@@ -10,8 +10,9 @@
 #            ├─ training    inference may be combined)
 #            │   ├─ data
 #            │   └─ modeling
-#            └─ inference
-#                └─ modeling
+#            ├─ inference
+#            │   └─ modeling
+#            └─ hub         (model cards + uploads; fed by tasks)
 #
 #   data, modeling, inference, training all sit on `core`.
 #   `training` must never import `inference` (and vice versa): their only
@@ -54,6 +55,16 @@ depends_on = [
     "reddit.core",
     "reddit.training",
     "reddit.inference",
+    "reddit.hub",
+]
+
+# Hub publishing: model cards and uploads. Sits on `core` only; the task
+# layer feeds it what discovery (inference) and the PEFT registry (modeling)
+# know, so neither pipeline gains a dependency on it.
+[[modules]]
+path = "reddit.hub"
+depends_on = [
+    "reddit.core",
 ]
 
 [[modules]]

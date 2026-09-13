@@ -71,3 +71,11 @@ already documented under `reddit.cli`.
 ::: reddit.tasks.run
 
 ::: reddit.tasks.predict
+
+## `reddit.hub`
+
+::: reddit.hub.card
+
+::: reddit.hub.evidence
+
+::: reddit.hub.upload

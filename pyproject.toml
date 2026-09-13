@@ -300,7 +300,6 @@ flash-attn = "flash_attn"
 DEP002 = [
     "accelerate", # `device_map="auto"` dispatch inside transformers
     "bitsandbytes", # 4-bit backend selected by BitsAndBytesConfig
-    "huggingface-hub", # hub downloads + HF_TOKEN consumption via transformers
     "openpyxl", # pandas engine for read_excel(labelled.xlsx)
     "flash-attn", # `attn_implementation="flash_attention_2"` (optional extra)
 ]
