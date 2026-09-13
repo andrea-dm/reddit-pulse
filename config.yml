@@ -131,6 +131,9 @@ families:
       - {name: qwen2.5_7b, id: Qwen/Qwen2.5-7B}
       - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
       - {name: qwen2.5_1.5b, id: Qwen/Qwen2.5-1.5B}
+  # Smoke-test family. Its model is named distinctly from `qwen.qwen2.5_0.5b`
+  # (same checkpoint): `--model` rejects a name declared by two families, so
+  # sharing the name made `reddit train --model qwen2.5_0.5b` unusable.
   test:
     models:
-      - {name: qwen2.5_0.5b, id: Qwen/Qwen2.5-0.5B}
+      - {name: qwen2.5_0.5b_smoke, id: Qwen/Qwen2.5-0.5B}

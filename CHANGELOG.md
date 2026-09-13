@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--model qwen2.5_0.5b` was rejected as ambiguous: the smoke-test `test`
+  family declared the same model name as the `qwen` family. The smoke
+  model is now `qwen2.5_0.5b_smoke` (same checkpoint), so its artefacts
+  also stop mixing with a real run's (`config.yml`).
 - `config.yml` keys the schema does not declare are rejected at load time
   (`extra="forbid"` on every section) instead of silently dropped: a
   `gradient_checkpointing: false` under `training.arguments` used to be
