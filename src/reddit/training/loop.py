@@ -32,7 +32,7 @@ from transformers.trainer_callback import PrinterCallback
 from reddit.core.errors import ConfigError
 from reddit.core.utils import dump_object, fmt_td
 from reddit.data.preparation import DataBundle, load_and_prepare_data
-from reddit.modeling.loading import detect_device_profile
+from reddit.modeling.loading import detect_device_profile, strip_quantization
 from reddit.modeling.metrics import compute_metrics
 from reddit.modeling.trainer import LogMetricsCallback, WeightedLossTrainer
 
@@ -213,6 +213,33 @@ def _metrics_record(
     } | {m.replace(prefix, ""): v for m, v in raw.items()}
 
 
+def _save_model_config(model: Any, checkpoint: Path) -> None:
+    """Write the model's ``config.json`` into the saved checkpoint.
+
+    A PEFT ``save_pretrained`` writes the adapter and nothing else, so the
+    head size, label names and pad token id that make the adapter a
+    self-describing classifier lived nowhere on disk: ``AutoConfig``
+    rejected the directory ("no `model_type`"), ``reddit predict`` could
+    not rebuild the config, and a Hub user could not reload the adapter
+    without re-deriving all three. Full checkpoints (BERT) already carry the
+    file; rewriting it there is idempotent.
+
+    Args:
+        model: The trained model (a ``PeftModel`` proxies ``config`` to the
+            wrapped transformer).
+        checkpoint: The directory ``Trainer.save_model`` just wrote.
+
+    Notes:
+        Writes ``config.json`` under ``checkpoint`` (I/O), without the
+        ``quantization_config`` block the 4-bit load left on it (see
+        :func:`reddit.modeling.loading.strip_quantization`). A model without
+        a ``config.save_pretrained`` (test doubles) is left alone.
+    """
+    model_config = getattr(model, "config", None)
+    if callable(getattr(model_config, "save_pretrained", None)):
+        strip_quantization(model_config).save_pretrained(str(checkpoint))
+
+
 def _preflight(ctx: SeedContext, strategy: SeedStrategy) -> _RunPlan:
     """Resolve everything that does not vary per seed, failing fast if it cannot.
 
@@ -362,6 +389,7 @@ def _run_one_seed(ctx: SeedContext, strategy: SeedStrategy, plan: _RunPlan, seed
     trainer.train()
     walltime = monotonic_ns() - t1
     trainer.save_model(str(checkpoint))
+    _save_model_config(model, checkpoint)
     _announce(ctx, f"Training {progress}... done: it took {fmt_td(walltime)}.")
 
     _announce(ctx, f"Evaluating {progress}...")

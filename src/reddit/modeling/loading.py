@@ -18,7 +18,10 @@ did load.
 from __future__ import annotations
 
 import importlib.util
+import json
+from copy import copy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import torch
@@ -31,6 +34,64 @@ LLM_MAX_LENGTH = 1024
 BERT_MAX_LENGTH = 512
 
 type AttentionImplementation = Literal["flash_attention_2", "sdpa"]
+
+# What `peft.PeftModel.save_pretrained` writes next to the adapter weights;
+# its presence is what makes a checkpoint directory an adapter rather than a
+# full model.
+ADAPTER_CONFIG_FILE = "adapter_config.json"
+
+
+def strip_quantization(model_config: Any) -> Any:
+    """A copy of a model config without the quantization it was trained under.
+
+    transformers records ``quantization_config`` on the config of a model
+    loaded in 4-bit, and saves it with ``config.json``. Fed back into
+    ``from_pretrained`` next to an explicit ``quantization_config`` (see
+    :func:`llm_model_args`), that stale block makes transformers treat the
+    Hub's full-precision base weights as pre-quantized: the linear layers
+    come back as plain parameters and PEFT then fails to attach the
+    adapter (``'Parameter' object has no attribute 'compress_statistics'``).
+    The checkpoint's config should describe the architecture, the head and
+    the labels; how the base is quantized is decided at load time.
+
+    Args:
+        model_config: A ``PretrainedConfig`` (or any object carrying the
+            attribute); left untouched.
+
+    Returns:
+        A shallow copy without ``quantization_config`` (and without the
+        ``_pre_quantization_dtype`` marker that accompanies it).
+    """
+    stripped = copy(model_config)
+    attributes: dict[str, Any] = getattr(stripped, "__dict__", {})
+    for attribute in ("quantization_config", "_pre_quantization_dtype"):
+        if attribute in attributes:
+            delattr(stripped, attribute)
+    return stripped
+
+
+def adapter_base_model(checkpoint: str | Path) -> str | None:
+    """The Hub id of the base model a PEFT adapter directory was trained on.
+
+    Args:
+        checkpoint: A saved checkpoint directory (unzipped archive).
+
+    Returns:
+        ``base_model_name_or_path`` from the adapter's config, or ``None``
+        when the directory holds a full checkpoint (no adapter config, or
+        one that names no base model).
+
+    Notes:
+        Reads ``adapter_config.json`` from disk (I/O).
+    """
+    path = Path(checkpoint) / ADAPTER_CONFIG_FILE
+    if not path.is_file():
+        return None
+    with open(path, encoding="utf-8") as f:
+        adapter: dict[str, Any] = json.load(f)
+    base = adapter.get("base_model_name_or_path")
+    return str(base) if base else None
+
 
 # Minimum CUDA compute capability for native bfloat16 and for flash-attention
 # 2 (both Ampere features; Turing and Volta have neither).

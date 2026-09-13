@@ -23,7 +23,7 @@ from reddit.core.config import Config, ModelSpec
 from reddit.core.errors import ConfigError
 from reddit.modeling.loading import DeviceProfile
 from reddit.training import loop
-from reddit.training.loop import FATAL_ERRORS, SeedContext, SeedResult, run_seeds
+from reddit.training.loop import FATAL_ERRORS, SeedContext, SeedResult, _save_model_config, run_seeds
 
 from ..conftest import RecordingLog
 
@@ -375,3 +375,29 @@ class TestLoopModule:
                 run_seeds(seed_context, strategy)
 
             assert strategy.build_calls == 0
+
+
+class TestSaveModelConfig:
+    """`config.json` travels with every checkpoint, PEFT adapters included."""
+
+    @pytest.mark.unit
+    class TestUnits:
+        def test_the_model_config_is_saved_without_its_quantization_block(self, tmp_path: Path) -> None:
+            saved: list[tuple[str, bool]] = []
+
+            class Config:
+                def __init__(self) -> None:
+                    self.quantization_config = {"load_in_4bit": True}
+
+                def save_pretrained(self, directory: str) -> None:
+                    saved.append((directory, hasattr(self, "quantization_config")))
+
+            model_config = Config()
+            _save_model_config(SimpleNamespace(config=model_config), tmp_path / "ckpt")
+
+            assert saved == [(str(tmp_path / "ckpt"), False)]
+            assert model_config.quantization_config == {"load_in_4bit": True}
+
+        def test_a_model_without_a_saveable_config_is_left_alone(self, tmp_path: Path) -> None:
+            _save_model_config(SimpleNamespace(), tmp_path)
+            _save_model_config(SimpleNamespace(config=object()), tmp_path)

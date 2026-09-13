@@ -94,6 +94,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Corpus labelling reloaded PEFT checkpoints through transformers' adapter
+  shortcut (`AutoModelForSequenceClassification.from_pretrained(<adapter
+  dir>)`), which on transformers 5 rebuilds the DoRA adapter into a model
+  whose logits differ from the trained one by up to 17 on the same titles
+  (predictions flipped). `reddit.inference.llms.load_classifier` now
+  reloads the 4-bit base model and applies `PeftModel.from_pretrained` on
+  top, reproducing the Trainer's model; the base weights are read from the
+  per-model cache the training stage already filled
+  (`src/reddit/inference/llms.py`).
+- PEFT checkpoints now carry `config.json` (head size, label names, pad
+  token): `Trainer.save_model` on a `PeftModel` writes the adapter only,
+  which left `reddit predict` unable to rebuild the model config
+  (`AutoConfig` rejected the directory) and a Hub user unable to reload
+  the adapter without re-deriving all three (`src/reddit/training/loop.py`).
+  The saved config drops the `quantization_config` block the 4-bit load
+  left on it (`reddit.modeling.loading.strip_quantization`): fed back into
+  `from_pretrained` next to an explicit 4-bit request it made transformers
+  treat the base weights as pre-quantized and PEFT could not attach the
+  adapter. `_predict_one` falls back to the base model's config for older
+  archives.
 - `--model qwen2.5_0.5b` was rejected as ambiguous: the smoke-test `test`
   family declared the same model name as the `qwen` family. The smoke
   model is now `qwen2.5_0.5b_smoke` (same checkpoint), so its artefacts
