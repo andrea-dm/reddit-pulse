@@ -439,6 +439,9 @@ class TestConfigModule:
             assert arguments.eval_strategy == "epoch"
             assert arguments.save_total_limit == 2
 
+        def test_gradient_checkpointing_defaults_on_as_the_pipeline_always_had_it(self) -> None:
+            assert TrainingConfig(seeds=[1]).gradient_checkpointing is True
+
         def test_the_fixed_seed_is_pinned_to_42(self) -> None:
             """Explicit, so a transformers default change cannot alter the protocol."""
             assert ArgumentsConfig().seed == 42

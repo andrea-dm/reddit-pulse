@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `training.gradient_checkpointing` (default `true`, the previous
+  hardcoded behaviour): reentrant activation checkpointing for decoder-LLM
+  training, applied consistently to `peft.prepare_model_for_kbit_training`
+  and `TrainingArguments` — the Trainer only ever switches checkpointing
+  on, so the knob has to reach both (`src/reddit/core/config.py`,
+  `src/reddit/training/llms.py`, `config.yml`).
 - `reddit.modeling.loading.DeviceProfile` / `detect_device_profile`: the
   model-loading policy is now resolved against the visible GPU. Decoder
   LLMs load in `bfloat16` with flash-attention 2 on Ampere-or-newer

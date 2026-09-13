@@ -354,6 +354,13 @@ class TrainingConfig(BaseModel):
         num_train_epochs: Epoch budget for decoder-LLM training.
         gradient_accumulation_steps: Micro-batches accumulated per optimizer
             step for decoder-LLM training.
+        gradient_checkpointing: Recompute activations in the backward pass
+            of decoder-LLM training (reentrant checkpointing, applied both
+            through ``peft.prepare_model_for_kbit_training`` and
+            ``TrainingArguments``). A memory-only trade: it changes no
+            numerics, costs roughly a third of the step time, and is worth
+            it only where activations would not otherwise fit — the 9B/27B
+            models on a 16 GB card, not the sub-3B models on an 80 GB one.
         bert: Full-fine-tuning hyperparameters for ``kind: bert`` families.
     """
 
@@ -367,6 +374,9 @@ class TrainingConfig(BaseModel):
     learning_rate: float = 1e-4
     num_train_epochs: int = 40
     gradient_accumulation_steps: int = 8
+    # `True` is what the pipeline always did; `config.yml` turns it off for
+    # runs whose activations fit comfortably without it.
+    gradient_checkpointing: bool = True
     bert: BertTrainingConfig = Field(default_factory=BertTrainingConfig)
 
 

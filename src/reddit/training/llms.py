@@ -102,7 +102,17 @@ class LlmSeedStrategy:
         model = AutoModelForSequenceClassification.from_pretrained(
             ctx.model.id, config=model_conf, cache_dir=ctx.hf_cache, **llm_model_args()
         )
-        model = prepare_model_for_kbit_training(model)
+        # `prepare_model_for_kbit_training` enables gradient checkpointing on
+        # its own (and registers the input-grad hook reentrant checkpointing
+        # needs) unless told otherwise, so the knob must reach it as well as
+        # `TrainingArguments`: the Trainer only ever switches checkpointing
+        # *on*, never off.
+        checkpointing = ctx.config.training.gradient_checkpointing
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": True} if checkpointing else None,
+        )
         model = get_peft_model(model, peft_config[ctx.finetuning_method])
         # Rationale: PeftModel proxies `config` to the wrapped transformer;
         # its declared attribute type is too narrow for this assignment.
@@ -177,8 +187,10 @@ class LlmSeedStrategy:
             ``config.training.arguments``.
 
         Notes:
-            Uses a cosine learning-rate schedule and gradient checkpointing
-            (reentrant) to fit the quantized model's memory budget.
+            Uses a cosine learning-rate schedule; gradient checkpointing
+            (reentrant) follows ``config.training.gradient_checkpointing``
+            and must agree with what :meth:`build_model` told
+            ``prepare_model_for_kbit_training``.
         """
         training = ctx.config.training
         return TrainingArguments(
@@ -188,8 +200,8 @@ class LlmSeedStrategy:
             lr_scheduler_type="cosine",
             num_train_epochs=training.num_train_epochs,
             gradient_accumulation_steps=training.gradient_accumulation_steps,
-            gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": True},
+            gradient_checkpointing=training.gradient_checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": True} if training.gradient_checkpointing else None,
             **training.arguments.model_dump(),
         )
 
