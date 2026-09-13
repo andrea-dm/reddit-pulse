@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/train_queue.sh`: trains a cohort as a memory-aware queue over
+  the local GPUs (one `reddit train` per model, largest measured footprint
+  first, each to the card with the most budget left, smaller jobs filling
+  the gaps as others exit), then publishes the selected checkpoints with one
+  `reddit upload` (`JOBS`, `GPUS`, `BUDGET_GB`, `COMMAND`, `UPLOAD`, `DRY`).
 - `reddit upload`: publishes selected checkpoints to the Hugging Face Hub,
   one repository per checkpoint (`hub.namespace` / `hub.repo_name` in
   `config.yml`; the template defaults to `reddit-pulse-{slug}` after the

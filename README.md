@@ -72,7 +72,9 @@ reddit upload  --model gemma2_2b    --dry-run       # stage Hub repos under outp
 `--family`/`--model` accept one or more values and pick from `families:` in
 `config.yml`; `--all-families` (alias `--all-models`) runs everything.
 `--gpu` sets `CUDA_VISIBLE_DEVICES` — split a cohort across GPUs by giving
-each invocation a disjoint `--model` subset.
+each invocation a disjoint `--model` subset, or let
+[`scripts/train_queue.sh`](scripts/train_queue.sh) queue the models by GPU
+memory (see [Fine-Tuning Decoder LLMs](docs/how_to/fine-tuning-decoder-llms.md)).
 
 ## Changelog
 
